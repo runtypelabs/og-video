@@ -8,7 +8,10 @@
 // Words that have come to rest fall asleep: they are baked into a cached layer and only the
 // moving ones are drawn live, so a settled pile costs nothing per frame.
 //
-// The first 15 frames (0.5 s: the dot and label popping in) depend only on the label and the
+// Dense motion of fine detail is what costs here (encoding ~100 frames of small rotating type),
+// so it runs at 24 fps and qp 23.
+//
+// The first 12 frames (0.5 s: the dot and label popping in) depend only on the label and the
 // accent, so they are one prefix per label/accent pair.
 import { defineScenario } from '../scenario.js'
 import { p } from '../schema.js'
@@ -18,11 +21,11 @@ import { prng } from './showcase-kit.js'
 
 const W = 1200
 const H = 630
-const FPS = 30
-const FRAMES = 210
+const FPS = 24
+const FRAMES = 168
 const RAIN_AT = 0.5
 const DROP_AT = 6.3
-const SUBSTEPS = 4
+const SUBSTEPS = 5
 const FONT = 17
 
 const WORDS = [
@@ -43,7 +46,7 @@ export const fallingWords = defineScenario({
     accent: p.color({ default: '#ff4a1c' }),
     seed: p.int({ min: 0, max: 9999, default: 1 }),
   }),
-  prefix: { frames: 15, key: (q) => `${q.label}|${q.accent}` },
+  prefix: { frames: 12, key: (q) => `${q.label}|${q.accent}` },
   poster: Math.round(5.6 * FPS),
   meta: (q) => ({ title: q.label, description: q.words.slice(0, 6).join(', ') }),
   setup,
@@ -55,9 +58,9 @@ export const fallingWords = defineScenario({
 const recorded = new Map()
 
 /**
- * Rains `sizes` (word boxes) into the frame and records every body's pose per frame:
- * x, y, angle in poses[(frame * n + k) * 3 ...]; asleepAt[k] is the first frame body k is at rest
- * (Infinity if never, before the drop).
+ * Rains `sizes` (word boxes) into the frame and records every body's pose per frame: x, y, angle
+ * in poses[(frame * n + k) * 3 ...], asleep[frame * n + k], and epoch[frame], which changes
+ * whenever the set of sleeping bodies does (the baked layer's key).
  */
 function simulate(sizes, seed) {
   const key = `${seed}|${sizes.map(([w, h]) => `${w},${h}`).join(';')}`
@@ -86,12 +89,13 @@ function simulate(sizes, seed) {
     })
   })
 
-  const frames = FRAMES
-  const poses = new Float32Array(frames * n * 3)
-  const asleepAt = new Array(n).fill(Infinity)
+  const poses = new Float32Array(FRAMES * n * 3)
+  const asleep = new Uint8Array(FRAMES * n)
+  const epoch = new Int32Array(FRAMES)
   const dt = 1 / FPS / SUBSTEPS
   let dropped = false
-  for (let f = 0; f < frames; f++) {
+  let e = 0
+  for (let f = 0; f < FRAMES; f++) {
     const t = f / FPS
     if (t >= RAIN_AT) {
       if (!dropped && t >= DROP_AT) {
@@ -101,15 +105,19 @@ function simulate(sizes, seed) {
       }
       for (let s = 0; s < SUBSTEPS; s++) world.step(dt)
     }
+    let changed = false
     words.forEach((b, k) => {
       const o = (f * n + k) * 3
       poses[o] = b.x
       poses[o + 1] = b.y
       poses[o + 2] = b.angle
-      if (b.asleep && !dropped && asleepAt[k] === Infinity) asleepAt[k] = f
+      asleep[f * n + k] = b.asleep ? 1 : 0
+      if (f > 0 && asleep[f * n + k] !== asleep[(f - 1) * n + k]) changed = true
     })
+    if (changed) e++
+    epoch[f] = e
   }
-  const out = { poses, asleepAt }
+  const out = { poses, asleep, epoch }
   recorded.set(key, out)
   while (recorded.size > 4) recorded.delete(recorded.keys().next().value)
   return out
@@ -165,8 +173,10 @@ function setup(ctx, q) {
     return sim.poses[o + 1] > -r && sim.poses[o + 1] < H + r
   }
 
-  const sleepOrder = [...words.keys()].filter((k) => sim.asleepAt[k] < Infinity).sort((a, b) => sim.asleepAt[a] - sim.asleepAt[b] || a - b)
-  const dropFrame = Math.ceil(DROP_AT * FPS - 1e-9)
+
+  // The first frame of each sleep epoch, where the baked layer reads its poses.
+  const epochStart = []
+  sim.epoch.forEach((e, f) => (epochStart[e] ??= f))
 
   const pop = (t) => {
     // back.out: a small overshoot.
@@ -184,12 +194,11 @@ function setup(ctx, q) {
       const t = i / FPS
       const dotK = r3(pop(clamp01((t - 0.05) / 0.35)))
       const pillK = r3(clamp01((t - 0.15) / 0.3))
-      // Bodies asleep by this frame are baked; the rest are drawn from the recording. After the
-      // drop every body moves again.
-      const asleep = i >= dropFrame ? 0 : sim.asleepAt.reduce((m, f) => (f <= i ? m + 1 : m), 0)
+      // Bodies asleep in this frame are baked into a layer (keyed by the sleep epoch); the rest
+      // are drawn from the recording.
       const live = []
-      if (t >= RAIN_AT) for (let k = 0; k < n; k++) if (!(i < dropFrame && sim.asleepAt[k] <= i) && visible(i, k)) live.push(k)
-      return { dotK, pillK, asleep, live, frame: live.length ? i : -1 }
+      if (t >= RAIN_AT) for (let k = 0; k < n; k++) if (!sim.asleep[i * n + k] && visible(i, k)) live.push(k)
+      return { dotK, pillK, epoch: sim.epoch[i], sleepers: epochStart[sim.epoch[i]], live, frame: live.length ? i : -1 }
     },
     draw(g, s) {
       const settled = s.dotK >= 1 && s.pillK >= 1
@@ -201,12 +210,10 @@ function setup(ctx, q) {
         g.clear(0xffffff)
         centre()
       })
-      // Sleepers, in the order they fell asleep: the first `asleep` of them.
-      g.layer(`asleep${s.asleep}`, () => {
-        for (let j = 0; j < s.asleep; j++) {
-          const k = sleepOrder[j]
-          g.draw(words[k].sprite, { transform: transformAt(sim.asleepAt[k], k) })
-        }
+      // Sleepers are still, so any frame of this epoch gives the same picture.
+      g.layer(`asleep${s.epoch}`, () => {
+        const f = s.sleepers
+        for (let k = 0; k < n; k++) if (sim.asleep[f * n + k] && visible(f, k)) g.draw(words[k].sprite, { transform: transformAt(f, k) })
       })
       for (const k of s.live) g.draw(words[k].sprite, { transform: transformAt(s.frame, k) })
     },

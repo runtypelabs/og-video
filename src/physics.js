@@ -6,8 +6,9 @@
 // It exists so scenes can precompute physics in setup and play the result back: run the world
 // once, record every body's pose per frame, then state(i) reads frame i. It is deterministic: the
 // same inputs give the same poses (plain double arithmetic in a fixed order; no clocks, no
-// unordered iteration). Bodies that come to rest fall asleep and stay asleep until woken with
-// `wake()`, so a settled pile is exactly still and its frames can be skipped and baked.
+// unordered iteration). Bodies that come to rest fall asleep: they are exactly still (so their
+// frames can be skipped and baked) and act as static, until something fast hits them, they lose
+// all contact, or `wake()` is called.
 
 const ALLOWED_PENETRATION = 0.5
 const BIAS = 0.2
@@ -59,6 +60,7 @@ export function createWorld({ gravity = 2000, iterations = 10, sleepSpeed = 6, s
     // Broad phase: sweep and prune on x over bounding circles, then the narrow phase on
     // overlapping pairs. Sorting is by (left edge, index), so the order is deterministic.
     const next = new Map()
+    const touched = new Set()
     const n = bodies.length
     for (const b of bodies) {
       b.c = Math.cos(b.angle)
@@ -77,13 +79,19 @@ export function createWorld({ gravity = 2000, iterations = 10, sleepSpeed = 6, s
         const [i, j] = i0 < j0 ? [i0, j0] : [j0, i0]
         const a = bodies[i]
         const b = bodies[j]
-        if (!dynamic(a) && !dynamic(b)) continue
+        if (a.invMass === 0 && b.invMass === 0) continue
         const r = a.r + b.r
         const dx = b.x - a.x
         const dy = b.y - a.y
         if (Math.abs(dy) > r || dx * dx + dy * dy > r * r) continue
         const contacts = collide(a, b)
         if (!contacts.length) continue
+        if (!dynamic(a) && !dynamic(b)) {
+          // Asleep on something: no forces, but it counts as support.
+          touched.add(a)
+          touched.add(b)
+          continue
+        }
         const key = i * n + j
         const old = arbiters.get(key)
         if (old) {
@@ -109,6 +117,16 @@ export function createWorld({ gravity = 2000, iterations = 10, sleepSpeed = 6, s
     }
     arbiters = next
 
+    // Wake sleepers that lost all support (nothing touches them) or that a moving body hits.
+    for (const { a, b } of arbiters.values()) {
+      touched.add(a)
+      touched.add(b)
+      for (const [s, o] of [[a, b], [b, a]]) {
+        if (s.asleep && dynamic(o) && Math.hypot(o.vx, o.vy) > 3 * sleepSpeed) wakeBody(s)
+      }
+    }
+    for (const b of bodies) if (b.asleep && !touched.has(b)) wakeBody(b)
+
     for (const b of bodies) {
       if (!dynamic(b)) continue
       b.vy += dt * gravity
@@ -133,12 +151,14 @@ export function createWorld({ gravity = 2000, iterations = 10, sleepSpeed = 6, s
     time += dt
   }
 
+  function wakeBody(b) {
+    b.asleep = false
+    b.still = 0
+  }
+
   /** Wakes every sleeping body (after removing a floor, say). */
   function wake() {
-    for (const b of bodies) {
-      b.asleep = false
-      b.still = 0
-    }
+    for (const b of bodies) wakeBody(b)
   }
 
   /** Removes a body (static or not). */
