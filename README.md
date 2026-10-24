@@ -40,7 +40,7 @@ request ──► Worker
 ## Self-host it
 
 ```sh
-npm install github:bookernath/streaming-og-video
+npm install github:runtypelabs/og-video
 ```
 
 ```js
