@@ -37,7 +37,7 @@ class HttpError extends Error {
 
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-expose-headers': 'content-length, content-range, x-sogv-cache, x-sogv-id, x-sogv-duration',
+  'access-control-expose-headers': 'content-length, content-range, server-timing, x-sogv-cache, x-sogv-id, x-sogv-duration',
 }
 
 /**
@@ -94,17 +94,19 @@ export function createHandler(options) {
   const renderKey = (scenario, cid) => `${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${cid}`
   const cacheUrl = (key, ext) => `https://streaming-og-video.internal/${key}.${ext}`
 
-  async function lookup(env, key, ext) {
-    if (o.edgeCache) {
-      const hit = await caches.default.match(cacheUrl(key, ext))
-      if (hit) return { cache: 'edge', bytes: () => hit.arrayBuffer().then((b) => new Uint8Array(b)), body: hit.body, size: Number(hit.headers.get('content-length')) }
-    }
-    if (R2) {
-      const obj = await env[R2].get(`renders/${key}.${ext}`)
-      if (obj) return { cache: 'r2', obj, bytes: () => obj.arrayBuffer().then((b) => new Uint8Array(b)), body: obj.body, size: obj.size }
-    }
-    return null
+  async function edgeLookup(key, ext) {
+    if (!o.edgeCache) return null
+    const hit = await caches.default.match(cacheUrl(key, ext))
+    return hit && { cache: 'edge', bytes: () => hit.arrayBuffer().then((b) => new Uint8Array(b)), body: hit.body, size: Number(hit.headers.get('content-length')) }
   }
+
+  async function r2Lookup(env, key, ext) {
+    if (!R2) return null
+    const obj = await env[R2].get(`renders/${key}.${ext}`)
+    return obj && { cache: 'r2', obj, bytes: () => obj.arrayBuffer().then((b) => new Uint8Array(b)), body: obj.body, size: obj.size }
+  }
+
+  const lookup = async (env, key, ext) => (await edgeLookup(key, ext)) ?? (await r2Lookup(env, key, ext))
 
   const putEdge = (key, ext, body, type) =>
     caches.default.put(cacheUrl(key, ext), new Response(body, { headers: { 'content-type': type, 'cache-control': 'public, max-age=31536000, immutable' } }))
@@ -197,10 +199,27 @@ export function createHandler(options) {
   async function video(request, env, ctx, scenario, input, ev) {
     const key = renderKey(scenario, input.cid)
     const wantsRange = parseRange(request.headers.get('range'), Infinity) !== null || request.method === 'HEAD'
-    const hit = await lookup(env, key, 'mp4')
+    // Server-Timing: Date.now() only advances across I/O in Workers, which is what these measure.
+    const timing = []
+    const timed = async (name, promise) => {
+      const t0 = Date.now()
+      try {
+        return await promise
+      } finally {
+        timing.push(`${name};dur=${Date.now() - t0}`)
+      }
+    }
+    let hit = await timed('edge', edgeLookup(key, 'mp4'))
+    let prefixPromise = null
+    if (!hit) {
+      // On an R2 miss the prefix is needed next, so fetch both at once.
+      prefixPromise = getPrefix(env, ctx, scenario, input.params)
+      prefixPromise.catch(() => {})
+      hit = await timed('r2', r2Lookup(env, key, 'mp4'))
+    }
     if (hit) {
       ev.cache = hit.cache
-      const headers = mediaHeaders(scenario, 'video/mp4', input, hit.cache)
+      const headers = mediaHeaders(scenario, 'video/mp4', input, hit.cache, { 'server-timing': timing.join(', ') })
       if (wantsRange) return sliceResponse(await hit.bytes(), request, headers)
       ev.bytes = hit.size
       if (hit.cache === 'r2' && o.edgeCache) {
@@ -211,11 +230,11 @@ export function createHandler(options) {
       return new Response(hit.body, { headers: { ...headers, 'content-length': String(hit.size) } })
     }
     ev.cache = 'miss'
-    if (await limited(request, env)) throw new HttpError(429, 'too many renders from this address; try again in a minute')
+    if (await timed('limit', limited(request, env))) throw new HttpError(429, 'too many renders from this address; try again in a minute')
     const eng = getEngine()
-    const prefix = await getPrefix(env, ctx, scenario, input.params)
+    const prefix = await timed('prefix', prefixPromise)
     ev.prefix = prefix.source
-    const headers = mediaHeaders(scenario, 'video/mp4', input, 'miss')
+    const headers = mediaHeaders(scenario, 'video/mp4', input, 'miss', { 'server-timing': [...timing, `prefix-source;desc=${prefix.source}`].join(', ') })
 
     if (wantsRange) {
       // Safari probes with `bytes=0-1`, needs the total size, then fetches ranges: render the
