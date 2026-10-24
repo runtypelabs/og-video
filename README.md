@@ -2,6 +2,8 @@
 
 Animated `og:video` link previews, rendered inside a Cloudflare Worker and streamed out faster than they play. No headless browser. Each distinct video renders once and is cached after that.
 
+![Six animated og:video cards rendered by the built-in scenarios: title-card, diagram, kinetic, metric, bars and release](docs/images/demo.gif)
+
 **Just want a URL?** Use the hosted version at **[og.video](https://og.video)**:
 
 ```html
