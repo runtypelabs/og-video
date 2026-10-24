@@ -1,0 +1,35 @@
+{
+  "name": "streaming-og-video",
+  "version": "0.1.0",
+  "description": "Animated og:video cards rendered and streamed from a Cloudflare Worker, faster than realtime, cached after the first view.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Nathan Booker",
+  "repository": { "type": "git", "url": "git+https://github.com/runtypelabs/og-video.git" },
+  "homepage": "https://og.video",
+  "keywords": ["og:video", "open graph", "cloudflare workers", "video", "mp4", "wasm", "motion graphics"],
+  "engines": { "node": ">=20" },
+  "exports": {
+    ".": { "types": "./types/index.d.ts", "default": "./src/index.js" },
+    "./worker": { "types": "./types/worker.d.ts", "default": "./src/worker/index.js" },
+    "./node": { "types": "./types/node.d.ts", "default": "./src/node/index.js" },
+    "./scenarios": { "types": "./types/scenarios.d.ts", "default": "./src/scenarios/index.js" },
+    "./gsap": { "types": "./types/gsap.d.ts", "default": "./src/gsap.js" }
+  },
+  "bin": { "sogv": "./src/node/cli.js" },
+  "files": ["src", "types", "wasm", "fonts", "LICENSE", "NOTICE.md", "README.md"],
+  "scripts": {
+    "test": "node --test",
+    "dev": "wrangler dev --config examples/worker/wrangler.jsonc",
+    "build:ogfx": "sh scripts/build-ogfx.sh",
+    "build:x264": "sh x264/build.sh"
+  },
+  "dependencies": {
+    "fontkit": "^2.0.4",
+    "gsap": "^3.14.2",
+    "mp4-muxer": "^5.2.2"
+  },
+  "devDependencies": {
+    "wrangler": "^4.149.0"
+  }
+}

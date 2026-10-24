@@ -1,0 +1,18 @@
+[package]
+name = "ogfx"
+description = "Retained-mode compositor for streaming-og-video (wasm32, SIMD)"
+license = "MIT"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
