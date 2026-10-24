@@ -43,7 +43,7 @@ test('atFps keeps the duration and scales frames and the prefix', () => {
   const k = atFps(kinetic, 120)
   assert.equal(k.video.fps, 120)
   assert.equal(k.video.frames / k.video.fps, kinetic.video.frames / kinetic.video.fps)
-  assert.equal(k.prefix.frames, kinetic.prefix.frames * 4)
+  assert.equal(k.prefix.frames, (kinetic.prefix.frames * 120) / kinetic.video.fps)
   assert.equal(atFps(kinetic, kinetic.video.fps), kinetic)
 })
 
