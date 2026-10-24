@@ -180,6 +180,10 @@ you no longer need it; the posted attachments don't depend on it.
 - The encoder drops unchanged frames, so an MP4 decodes to fewer frames than the scenario has.
   Sheets and frame comparisons resample to the scenario's fps first, which holds the dropped
   frames as a player would. Don't pick frames with a raw `select=eq(n,…)`.
+- For a few seconds after a push, `gh pr view`'s `headRefOid` and `refs/pull/<n>/head` still
+  point at the old commit. For same-repo PRs, `run.sh` reads the branch tip with
+  `git ls-remote` and says so when the two disagree. For fork PRs, wait about 10 s after the
+  push. Check the head SHA in the run header against what you pushed.
 - Base is the merge base, not `origin/main`'s tip, so commits that landed on main after the
   branch point don't show up as changes.
 - A Rust change without a rebuilt `wasm/ogfx.wasm` renders identically. That's the warning in

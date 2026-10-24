@@ -26,8 +26,20 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -n "$PR" ]; then
-  read -r BASE_REF HEAD < <(gh pr view "$PR" --json baseRefName,headRefOid -q '"\(.baseRefName) \(.headRefOid)"')
-  git -C "$ROOT" fetch -q origin "$BASE_REF" "pull/$PR/head"
+  read -r BASE_REF HEAD HEAD_REF CROSS < <(gh pr view "$PR" --json baseRefName,headRefOid,headRefName,isCrossRepository \
+    -q '"\(.baseRefName) \(.headRefOid) \(.headRefName) \(.isCrossRepository)"')
+  # headRefOid (and refs/pull/<n>/head) lag a push by a few seconds; the branch itself doesn't.
+  # Same-repo PRs read the branch tip so a run right after a push renders what was pushed.
+  if [ "$CROSS" = false ]; then
+    TIP="$(git -C "$ROOT" ls-remote origin "refs/heads/$HEAD_REF" | cut -f1)"
+    if [ -n "$TIP" ] && [ "$TIP" != "$HEAD" ]; then
+      echo "PR head not updated yet (${HEAD:0:7}); using the branch tip ${TIP:0:7}" >&2
+      HEAD="$TIP"
+    fi
+    git -C "$ROOT" fetch -q origin "$BASE_REF" "refs/heads/$HEAD_REF"
+  else
+    git -C "$ROOT" fetch -q origin "$BASE_REF" "pull/$PR/head"
+  fi
   BASE="$(git -C "$ROOT" merge-base "origin/$BASE_REF" "$HEAD")"
 elif [ -z "$BASE" ] || [ -z "$HEAD" ]; then
   echo "usage: run.sh --pr <n> [--post] ... | --base <rev> --head <rev>" >&2
