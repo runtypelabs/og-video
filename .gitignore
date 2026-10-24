@@ -1,0 +1,8 @@
+node_modules/
+out/
+.wrangler/
+crates/ogfx/target/
+x264/src/
+x264/bin/
+*.log
+.DS_Store

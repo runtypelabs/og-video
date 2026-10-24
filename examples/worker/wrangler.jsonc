@@ -1,0 +1,11 @@
+{
+  "name": "streaming-og-video-example",
+  "main": "index.js",
+  "compatibility_date": "2026-10-01",
+  // Renders are CPU-heavy only on a cache miss (~0.2-0.6 s of CPU for a 7 s video).
+  "limits": { "cpu_ms": 30000 },
+  "r2_buckets": [{ "binding": "RENDERS", "bucket_name": "streaming-og-video-renders" }],
+  "kv_namespaces": [{ "binding": "STATE", "id": "<your KV namespace id>" }],
+  "ratelimits": [{ "name": "RENDER_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }],
+  "observability": { "enabled": true }
+}
