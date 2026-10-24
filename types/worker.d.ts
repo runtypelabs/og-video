@@ -39,9 +39,15 @@ export interface StateStore {
   put(env: any, scenario: string, id: string, value: { params: any; cid: string }): Promise<void>
 }
 
+export type Av1Fps = 24 | 25 | 30 | 48 | 50 | 60 | 90 | 120
+
 export interface Av1Options {
-  /** Frame rate of the AV1 variant (the scenario is retimed to it). Default 120. */
-  fps?: 24 | 25 | 30 | 48 | 50 | 60 | 90 | 120
+  /**
+   * Frame rate of the AV1 variant (the scenario is retimed to it), or a function of the scenario.
+   * Default 120. At the edge a 7 s card costs roughly 2-12 s of CPU at 120 fps, and full-frame
+   * motion (gallery, falling-words) more than the 30 s a background render gets: give those 60 or less.
+   */
+  fps?: Av1Fps | ((scenario: Scenario) => Av1Fps)
   /** libaom realtime cpu-used, 7-12. Default 10. */
   speed?: number
   /** Constant-quality level, 0-63 (lower is better and bigger). Default 30. */

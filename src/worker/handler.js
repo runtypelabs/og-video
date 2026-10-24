@@ -73,7 +73,13 @@ export function createHandler(options) {
   if (o.signatures === 'required' && !o.secret) throw new Error('signatures: "required" needs a secret binding name')
   const basePath = normalizeBase(o.basePath)
   const av1 = o.av1 ? { ...AV1_DEFAULTS, miss: 'fallback', ...(o.av1 === true ? {} : o.av1) } : null
-  if (av1 && ![24, 25, 30, 48, 50, 60, 90, 120].includes(av1.fps)) throw new Error(`av1.fps must be one of 24, 25, 30, 48, 50, 60, 90, 120`)
+  /** The AV1 frame rate for a scenario: `av1.fps` may be a number or a function of the scenario. */
+  const av1Fps = (scenario) => {
+    const fps = typeof av1.fps === 'function' ? av1.fps(scenario) : av1.fps
+    if (![24, 25, 30, 48, 50, 60, 90, 120].includes(fps)) throw new Error(`av1.fps must be one of 24, 25, 30, 48, 50, 60, 90, 120 (got ${fps} for ${scenario.id})`)
+    return fps
+  }
+  if (av1) for (const s of scenarios.values()) av1Fps(s)
   /** Background AV1 renders in flight in this isolate, by key. */
   const av1Pending = new Map()
   const R2 = o.bucket
@@ -114,7 +120,7 @@ export function createHandler(options) {
   const renderKey = (scenario, cid) => `${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${cid}`
   // AV1 renders live under their own top-level prefix, keyed by every setting that changes bytes.
   const av1Key = (scenario, cid) =>
-    `av1/${AV1_VERSION}/${av1.fps}-${av1.speed}-${av1.cq}${av1.screen ? 's' : ''}/${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${cid}`
+    `av1/${AV1_VERSION}/${av1Fps(scenario)}-${av1.speed}-${av1.cq}${av1.screen ? 's' : ''}/${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${cid}`
   const cacheUrl = (key, ext) => `https://streaming-og-video.internal/${key}.${ext}`
 
   async function edgeLookup(key, ext) {
@@ -332,7 +338,7 @@ export function createHandler(options) {
   async function renderAv1(env, scenario, input, key, a) {
     a ??= await getEngine().assets(scenario, input.params)
     const t0 = Date.now()
-    const r = await getEngine().av1(scenario, input.params, { ...av1, assets: a })
+    const r = await getEngine().av1(scenario, input.params, { ...av1, fps: av1Fps(scenario), assets: a })
     // Date.now() only advances across I/O in Workers: yield once so it covers the render.
     await yieldToNetwork()
     const meta = { codec: r.codec, fps: String(r.fps), encoded: String(r.encoded), renderMs: String(Date.now() - t0) }
@@ -425,7 +431,7 @@ export function createHandler(options) {
     const l = await links(request, env, scenario, input)
     const meta = scenario.meta(input.params) ?? {}
     const v = scenario.video
-    const html = (o.page ?? sharePage)({ ...l, ...meta, width: v.width, height: v.height, ...(av1 && { av1Codec: av1Codec(v.width, v.height, av1.fps), av1Fps: av1.fps, fps: v.fps }), siteName: o.siteName, scenario, params: input.params })
+    const html = (o.page ?? sharePage)({ ...l, ...meta, width: v.width, height: v.height, ...(av1 && { av1Codec: av1Codec(v.width, v.height, av1Fps(scenario)), av1Fps: av1Fps(scenario), fps: v.fps }), siteName: o.siteName, scenario, params: input.params })
     return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': o.cacheControl, ...CORS } })
   }
 
