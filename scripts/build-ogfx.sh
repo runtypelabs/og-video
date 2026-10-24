@@ -4,5 +4,5 @@
 set -e
 cd "$(dirname "$0")/.."
 (cd crates/ogfx && RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-unknown-unknown)
-wasm-opt -O3 --enable-simd crates/ogfx/target/wasm32-unknown-unknown/release/ogfx.wasm -o wasm/ogfx.wasm
+wasm-opt -O3 -g --strip-dwarf --enable-simd crates/ogfx/target/wasm32-unknown-unknown/release/ogfx.wasm -o wasm/ogfx.wasm
 ls -l wasm/ogfx.wasm

@@ -51,6 +51,26 @@ export function prng(seed) {
  * dot grid and ordered dither so the glow does not band once it is H.264.
  */
 export function background(ctx, theme, accent, { glowAt = [W * 0.92, -40], radius = 760, dots = 24, dotFade = true } = {}) {
+  // Painting is ~756k iterations of float math, and it was the largest source of garbage in
+  // production profiles, so each isolate keeps the last few backdrops and copies them in.
+  const key = JSON.stringify([theme.bg, theme.dot, theme.glow, theme.dotAlpha, accent, glowAt, radius, dots, dotFade])
+  const hit = BACKDROPS.get(key)
+  if (hit) {
+    BACKDROPS.delete(key)
+    BACKDROPS.set(key, hit)
+    return ctx.bitmap(0, 0, W, H, (px) => px.set(hit))
+  }
+  const sprite = paintBackground(ctx, theme, accent, glowAt, radius, dots, dotFade, (px) => {
+    BACKDROPS.set(key, px.slice())
+    if (BACKDROPS.size > BACKDROP_CACHE) BACKDROPS.delete(BACKDROPS.keys().next().value)
+  })
+  return sprite
+}
+
+const BACKDROP_CACHE = 4 // about 3 MB each
+const BACKDROPS = new Map()
+
+function paintBackground(ctx, theme, accent, glowAt, radius, dots, dotFade, done) {
   const bg = ch(theme.bg)
   const ac = ch(hex(accent))
   const dt = ch(theme.dot)
@@ -84,6 +104,7 @@ export function background(ctx, theme, accent, { glowAt = [W * 0.92, -40], radiu
         px[o + 3] = 255
       }
     }
+    done(px)
   })
 }
 
