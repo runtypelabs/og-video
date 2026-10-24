@@ -73,10 +73,14 @@ export function createHandler(options) {
   if (o.signatures === 'required' && !o.secret) throw new Error('signatures: "required" needs a secret binding name')
   const basePath = normalizeBase(o.basePath)
   const av1 = o.av1 ? { ...AV1_DEFAULTS, miss: 'fallback', ...(o.av1 === true ? {} : o.av1) } : null
-  /** The AV1 frame rate for a scenario: `av1.fps` may be a number or a function of the scenario. */
+  /**
+   * The AV1 frame rate for a scenario: `av1.fps` may be a number or a function of the scenario.
+   * 0 (or null) means the scenario has no AV1 variant: its .av1.mp4 redirects to H.264.
+   */
   const av1Fps = (scenario) => {
-    const fps = typeof av1.fps === 'function' ? av1.fps(scenario) : av1.fps
-    if (![24, 25, 30, 48, 50, 60, 90, 120].includes(fps)) throw new Error(`av1.fps must be one of 24, 25, 30, 48, 50, 60, 90, 120 (got ${fps} for ${scenario.id})`)
+    if (!av1) return 0
+    const fps = (typeof av1.fps === 'function' ? av1.fps(scenario) : av1.fps) || 0
+    if (fps && ![24, 25, 30, 48, 50, 60, 90, 120].includes(fps)) throw new Error(`av1.fps must be 0 or one of 24, 25, 30, 48, 50, 60, 90, 120 (got ${fps} for ${scenario.id})`)
     return fps
   }
   if (av1) for (const s of scenarios.values()) av1Fps(s)
@@ -364,6 +368,7 @@ export function createHandler(options) {
       ev.cache = 'crawler'
       return fallback()
     }
+    if (!av1Fps(scenario)) return fallback()
     const key = av1Key(scenario, input.cid)
     const headers = (cache, meta) => mediaHeaders(scenario, 'video/mp4', input, cache, { ...av1Headers(meta), vary: 'prefer' })
     const edge = o.edgeCache && (await caches.default.match(cacheUrl(key, 'mp4')))
@@ -420,7 +425,7 @@ export function createHandler(options) {
     const at = input.id ? `${base}/${input.id}` : base
     const search = input.id ? '' : new URL(request.url).search
     const l = { page: `${at}${search}`, video: `${at}.mp4${search}`, image: `${at}.png${search}` }
-    if (av1) l.av1 = `${at}.av1.mp4${search}`
+    if (av1Fps(scenario)) l.av1 = `${at}.av1.mp4${search}`
     return l
   }
 
@@ -428,7 +433,7 @@ export function createHandler(options) {
     const l = await links(request, env, scenario, input)
     const meta = scenario.meta(input.params) ?? {}
     const v = scenario.video
-    const html = (o.page ?? sharePage)({ ...l, ...meta, width: v.width, height: v.height, ...(av1 && { av1Codec: av1Codec(v.width, v.height, av1Fps(scenario)), av1Fps: av1Fps(scenario), fps: v.fps }), siteName: o.siteName, scenario, params: input.params })
+    const html = (o.page ?? sharePage)({ ...l, ...meta, width: v.width, height: v.height, ...(l.av1 && { av1Codec: av1Codec(v.width, v.height, av1Fps(scenario)), av1Fps: av1Fps(scenario), fps: v.fps }), siteName: o.siteName, scenario, params: input.params })
     return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': o.cacheControl, ...CORS } })
   }
 

@@ -45,9 +45,10 @@ export interface Av1Options {
   /**
    * Frame rate of the AV1 variant (the scenario is retimed to it), or a function of the scenario.
    * Default 120. At the edge a 7 s card costs roughly 2-12 s of CPU at 120 fps, and full-frame
-   * motion (gallery, falling-words) more than the 30 s a background render gets: give those 60 or less.
+   * motion (gallery, falling-words) more than the 30 s a background render gets: give those less,
+   * or 0 for no AV1 variant (its .av1.mp4 then redirects to H.264).
    */
-  fps?: Av1Fps | ((scenario: Scenario) => Av1Fps)
+  fps?: Av1Fps | ((scenario: Scenario) => Av1Fps | 0)
   /** libaom realtime cpu-used, 7-12. Default 10. */
   speed?: number
   /** Constant-quality level, 0-63 (lower is better and bigger). Default 30. */
