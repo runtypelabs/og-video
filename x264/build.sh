@@ -29,6 +29,6 @@ for f in enc_open enc_input_ptr enc_out_ptr enc_out_key enc_out_pts enc_out_dts 
 done
 # A 1 MB stack instead of zig's 16 MB default keeps the instance near 20 MB.
 zig cc -target wasm32-wasi -mexec-model=reactor -O3 -msimd128 -Wl,-z,stack-size=1048576 -Isrc wrapper.c src/libx264.a $EXPORTS -o x264.unopt.wasm
-wasm-opt -O3 --enable-simd --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --strip-debug x264.unopt.wasm -o ../wasm/x264.wasm
+wasm-opt -O3 --enable-simd --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals -g --strip-dwarf x264.unopt.wasm -o ../wasm/x264.wasm
 rm x264.unopt.wasm
 ls -l ../wasm/x264.wasm
