@@ -1,0 +1,151 @@
+{
+  "title-card": {
+    "title": "We shipped it",
+    "kicker": "Launch",
+    "badge": "v2.0",
+    "brand": "ACME",
+    "accent": "#f97316",
+    "footer": "Available today",
+    "url": "acme.dev/blog"
+  },
+  "diagram": {
+    "title": "Checkout, from cart to receipt",
+    "tagline": "Three services, one queue",
+    "brand": "SHOP",
+    "accent": "#10b981",
+    "graph": "Clients: Web@desktop, App@phone | Services: Cart@cart, Payments@card, Mailer@mail | Data: Orders@database",
+    "stats": [
+      {
+        "value": 42,
+        "label": "ms p95"
+      },
+      {
+        "value": 3,
+        "label": "regions"
+      }
+    ]
+  },
+  "kinetic": {
+    "text": "Ship *faster* with previews that *move*",
+    "by": "The og.video team",
+    "accent": "#7c3aed",
+    "theme": "light"
+  },
+  "metric": {
+    "label": "Monthly revenue",
+    "value": 1284.5,
+    "decimals": 1,
+    "prefix": "$",
+    "suffix": "k",
+    "delta": "-4% vs last month",
+    "data": [
+      60,
+      58,
+      61,
+      55,
+      52,
+      54,
+      49,
+      47,
+      50,
+      44
+    ],
+    "accent": "#ef4444",
+    "theme": "light"
+  },
+  "bars": {
+    "title": "Signups by day",
+    "data": [
+      120,
+      340,
+      280,
+      90,
+      410,
+      150,
+      60
+    ],
+    "labels": [
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+      "Sun"
+    ],
+    "unit": "k",
+    "highlight": "last",
+    "average": false,
+    "accent": "#f59e0b",
+    "theme": "light"
+  },
+  "release": {
+    "title": "Spring release",
+    "version": "v3.0.1",
+    "kicker": "Release notes",
+    "items": [
+      "Strokes in the compositor",
+      "A monospace font",
+      "Bundled prefixes",
+      "Per-frame cost budget in CI",
+      "Film grain"
+    ],
+    "icons": [
+      "pencil",
+      "doc",
+      "package",
+      "stats",
+      "art"
+    ],
+    "accent": "#0ea5e9",
+    "theme": "light"
+  },
+  "dot-matrix": {
+    "title": "Scrape, chart and ship code from one API.",
+    "brand": "Fieldwork",
+    "url": "fieldwork.dev",
+    "accent": "#db2777",
+    "items": [
+      {
+        "icon": "scrape",
+        "label": "scrape"
+      },
+      {
+        "icon": "chart",
+        "label": "charts"
+      },
+      {
+        "icon": "code",
+        "label": "code"
+      }
+    ]
+  },
+  "falling-words": {
+    "label": "Errors",
+    "words": [
+      "Timeout",
+      "Retry",
+      "Null",
+      "Panic",
+      "Overflow",
+      "Deadlock",
+      "OOM",
+      "Race",
+      "Leak"
+    ],
+    "count": 60,
+    "seed": 42,
+    "accent": "#22c55e"
+  },
+  "gallery": {
+    "title": "Lab",
+    "description": "PNG, JPEG and WebP thumbnails from data URIs.",
+    "site": "lab.acme.dev",
+    "accent": "#e11d48",
+    "images": [
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACgAAAAeEAIAAACBLxfJAAAAgUlEQVRYw+3YiQ2AIBAEQE2MWIF9Km1BgQSCdgGJ41Vwm33uWUuJ8TwXpraWegjX7DZGA75ntzEQcM09HBjDOyfpQ5I0F1qih62UbgljuGoebrnvv6Q/XKCkucUjYwxXjmHSwxLgKs5hTNIPJmnuWiLvYQmwuHhgX0vNw15KY6H1As/0XrxdVEpGAAAAAElFTkSuQmCC",
+      "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAAeACgDASIAAhEBAxEB/8QAGQAAAwEBAQAAAAAAAAAAAAAABAUGAAID/8QAIBAAAgMAAgIDAQAAAAAAAAAAAAECBBEDFBIhEyIxQf/EABcBAQEBAQAAAAAAAAAAAAAAAAQFAwL/xAAbEQADAQEBAQEAAAAAAAAAAAAAAQIRAwQSIf/aAAwDAQACEQMRAD8AguHj85DWtV1fgJRinhQ0uJPBcTpP9HVyCdL6/gJYq4n6KvrL4tFV3iS01qMQPl6W6JTm4/CRgq7FLTBmsK0PVpzSnjwf0+dLPZLQk4S1DGvYkkdxWB/Ry+iq7n0zRbc5099gPaln9BbFiTTNav8AAnLzYzwuT1tGBZyc5azB29KkrFh//9k=",
+      "data:image/webp;base64,UklGRv4AAABXRUJQVlA4IPIAAACwBgCdASooAB4APr1MnUunJCKhtUgA4BeJbACdMoRknzA7QQdVhITT+evkYyNGmdpX6VrWxlSMomHuz/4iAAD+7hcopIcoc9of0rcKRIGQD/5Ena4+QGVn6jdVmiDaFJpF4AsH6xLS+bw54ffg1IYOleehP9yoME8rdIy6Hi2Tv/Ds6QnjbTlHPxfrq7/qZqdi1vZ9LR00GR/jYNBObXoIqHPJLhtmQAYgUDVeJfoUmGlKgEGVy1Yo7vhv/62jJzDONbWVZJEj5NMJ0k9clfkFXP6f0zqspotrVDpha6yEdtTJ3MozY91wueSuP8HdyFoAAA=="
+    ]
+  }
+}

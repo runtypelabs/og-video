@@ -6,3 +6,4 @@ x264/src/
 x264/bin/
 *.log
 .DS_Store
+.verify/
