@@ -80,6 +80,13 @@ if an invariant failed, and it still posts in that case.
    as GitHub attachments and upserts the comment that starts with `<!-- verify-og-video -->`.
    `--dry-run` prints the Markdown with local paths and uploads nothing.
 
+5. **AV1 (optional).** With `--av1 <fps spec>` (for example `--av1 120,gallery=30,falling-words=60`),
+   `scripts/av1.mjs` renders each scenario's AV1 variant at head, next to H.264 retimed to the
+   same frame rate, and checks each file with ffprobe and, on macOS, AVFoundation
+   (`scripts/avcheck.swift`, Safari's media stack). The comment gets an "AV1 variant" section:
+   a timing and size table and a player per scenario. Use it on changes to `src/engine/av1.js`,
+   `src/engine/aom.js`, `aom/` or `wasm/aom.wasm`.
+
 The stages also run on their own, which is how you re-post a run or compare by hand.
 
 ### Invariants checked on every render

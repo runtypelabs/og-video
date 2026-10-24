@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Render evidence for a PR (or any two revisions), compare, and optionally post it.
 #
-#   run.sh --pr <n> [--post] [--notes notes.md] [--scenarios a,b | --scenarios all] [--runs 5]
+#   run.sh --pr <n> [--post] [--notes notes.md] [--scenarios a,b | --scenarios all] [--runs 5] [--av1 120,gallery=30]
 #   run.sh --base <rev> --head <rev> [--scenarios ...]          # local, never posts
 #
 # Base is the merge base of the PR's base branch and its head, so main moving on doesn't show
@@ -11,7 +11,7 @@ set -euo pipefail
 
 SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(git rev-parse --show-toplevel)"
-PR="" BASE="" HEAD="" POST=0 NOTES="" SCENARIOS="" RUNS=5
+PR="" BASE="" HEAD="" POST=0 NOTES="" SCENARIOS="" RUNS=5 AV1=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --pr) PR="$2"; shift 2 ;;
@@ -21,6 +21,7 @@ while [ $# -gt 0 ]; do
     --notes) NOTES="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
     --scenarios) SCENARIOS="$2"; shift 2 ;;
     --runs) RUNS="$2"; shift 2 ;;
+    --av1) AV1="$2"; shift 2 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -92,6 +93,8 @@ if [ -n "$SCENARIOS" ]; then
     tree "$sha"
     node "$SKILL/scripts/render.mjs" --checkout "$TREE" --out "$RUN/$side" --scenarios "$SCENARIOS" --runs "$RUNS"
   done
+  # The AV1 variant at head (TREE is head now), next to H.264 at the same frame rate.
+  [ -n "$AV1" ] && node "$SKILL/scripts/av1.mjs" --checkout "$TREE" --out "$RUN/av1" --scenarios "$SCENARIOS" --fps "$AV1"
 fi
 
 status=0

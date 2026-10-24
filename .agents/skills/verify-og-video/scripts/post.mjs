@@ -138,6 +138,39 @@ const changedSections = items
     return lines.join('\n')
   })
 
+// The AV1 variant (run.sh --av1), when the run has one.
+const av1File = path.join(run, 'av1', 'manifest.json')
+const av1 = existsSync(av1File) ? JSON.parse(readFileSync(av1File, 'utf8')).entries : []
+const av1Section = av1.length
+  ? [
+      '#### AV1 variant (head)',
+      'Rendered whole at the frame rate shown, next to H.264 retimed to the same frame rate on the same machine (best of 2). Default params.',
+      [
+        '| Scenario | fps | Frames (encoded) | H.264 ms | AV1 ms | AV1 / H.264 | H.264 size | AV1 size |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- |',
+        ...av1.map((e) =>
+          e.error
+            ? `| \`${e.id}\` | ${e.fps} | **error** | | | | | |`
+            : `| \`${e.id}\` | ${e.fps} | ${e.frames} (${e.encoded}) | ${e.h264.ms} | ${e.av1.ms} | ${(e.av1.ms / e.h264.ms).toFixed(1)}x | ${kb(e.h264.bytes)} | ${kb(e.av1.bytes)} |`,
+        ),
+      ].join('\n'),
+      ...av1
+        .filter((e) => !e.error)
+        .map((e) =>
+          [
+            `<details><summary><code>${e.id}</code> · ${e.codec} · ${e.fps} fps</summary>\n`,
+            e.ffprobe ? `ffprobe: \`${e.ffprobe}\`` : '',
+            e.avfoundation ? `AVFoundation: \`${e.avfoundation}\`` : '',
+            video(`av1/${e.file}`),
+            '</details>',
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+        ),
+      ...av1.filter((e) => e.error).map((e) => `\`${e.id}\`:\n\`\`\`\n${e.error}\n\`\`\``),
+    ].join('\n\n')
+  : ''
+
 const unchanged = items.filter((i) => i.status === 'identical')
 const unchangedSection = unchanged.length
   ? [
@@ -185,6 +218,7 @@ const runBody = [
   items.length ? `<sub>Size is the whole MP4. Bench is \`sogv bench --runs ${items[0].head?.bench?.runs ?? items[0].base?.bench?.runs ?? '?'}\` on the machine that ran this, base then head, so compare them with each other, not with other runs.</sub>` : '',
   ...changedSections,
   ...otherSections,
+  av1Section,
   unchangedSection,
   RUN_END,
 ]
