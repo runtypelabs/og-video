@@ -108,6 +108,28 @@ export const p = {
       return `#${h.toLowerCase()}`
     })
   },
+  /**
+   * An image URL: https (or http) or a base64 `data:image/png|jpeg|webp` URI, at most `max`
+   * characters (default 2048). The engine fetches and decodes image params before setup; draw
+   * them with ctx.image(url, box).
+   */
+  image(opts = {}) {
+    const { max = 2048 } = opts
+    return base('image', opts, (v, path) => {
+      if (typeof v !== 'string') throw new ParamError('expected an image URL', path)
+      const s = v.trim()
+      if (s.length > max) throw new ParamError(`at most ${max} characters`, path)
+      if (/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(s)) return s
+      let url
+      try {
+        url = new URL(s)
+      } catch {
+        throw new ParamError('expected an http(s) URL or a data:image URI', path)
+      }
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new ParamError('expected an http(s) URL or a data:image URI', path)
+      return url.href
+    })
+  },
   /** An array of `item`, at most `max` long (default 20). */
   array(item, opts = {}) {
     const { max = 20, min = 0 } = opts
@@ -144,6 +166,19 @@ function parseJson(s, path) {
   } catch {
     throw new ParamError('expected JSON', path)
   }
+}
+
+/**
+ * Every image URL in `value`, found by walking our schema (p.image fields, in arrays and objects).
+ * Other schema libraries have no image kind, so they contribute nothing.
+ * @returns {string[]}
+ */
+export function imageUrls(schema, value, out = []) {
+  if (!schema || value === undefined || value === null) return out
+  if (schema.kind === 'image' && typeof value === 'string') out.push(value)
+  else if (schema.kind === 'array' && Array.isArray(value)) for (const v of value) imageUrls(schema.item, v, out)
+  else if (schema.kind === 'object' && typeof value === 'object') for (const [k, s] of Object.entries(schema.shape)) imageUrls(s, value[k], out)
+  return out
 }
 
 /**

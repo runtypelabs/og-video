@@ -1,4 +1,5 @@
 import type { Scenario, FontSource } from './index.js'
+import type { ImageOptions } from './node.js'
 
 export interface RenderEvent {
   type: 'video' | 'poster' | 'page' | 'json' | 'write'
@@ -19,6 +20,8 @@ export interface RenderEvent {
   frames?: number
   /** True when load made the tail skip frames (such renders are not cached). */
   degraded?: boolean
+  /** Image params that could not be fetched (such renders are not cached). */
+  missingImages?: number
   /** Renders queued or running in this isolate when this one started. */
   queued?: number
   /** Wall time in ms as Workers measure it (advances on I/O only). */
@@ -60,6 +63,8 @@ export interface HandlerOptions {
   basePath?: string
   /** With basePath, also serve the unprefixed routes. Default: false. */
   legacyPaths?: boolean
+  /** Fetching image params: allowlist, size and count caps, cache budgets, custom fetch. */
+  images?: ImageOptions
   siteName?: string
   /** Custom share page HTML. */
   page?(o: { page: string; video: string; image: string; width: number; height: number; title?: string; description?: string; siteName?: string; scenario: Scenario; params: any }): string

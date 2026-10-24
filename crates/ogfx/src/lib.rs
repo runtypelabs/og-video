@@ -17,7 +17,8 @@
 
 use core::arch::wasm32::*;
 use tiny_skia::{
-    Color, FillRule, Mask, Paint, Path, PathBuilder, Pixmap, Transform,
+    Color, FillRule, GradientStop, LinearGradient, Mask, Paint, Path, PathBuilder, Pixmap, Point, RadialGradient, SpreadMode,
+    Transform,
 };
 
 /// Layer slots available to `layer_save` / `layer_restore`.
@@ -76,9 +77,17 @@ struct State {
     /// One macroblock converted to I420 (256 Y + 64 U + 64 V), compared before it is stored.
     mb_tmp: [u8; 384],
     mb_info: Vec<u8>,
+    /// A blurred copy of the sprite being drawn.
     scratch: Vec<u8>,
-    scratch2: Vec<u8>,
-    prefix: Vec<u32>,
+    blur: BlurBufs,
+    /// Mask values and sampled source pixels for the draw in progress.
+    mask_buf: Vec<u8>,
+    row_buf: Vec<u32>,
+    /// Frame-size mask for clipped or masked fills (allocated on first use).
+    fill_mask: Option<Mask>,
+    dots: Vec<Dots>,
+    /// The most recently decoded image (see image_decode).
+    image: Option<Image>,
     yuv: Vec<u8>,
     grid: Option<Grid>,
 }
@@ -110,8 +119,12 @@ fn new_state(w: usize, h: usize) -> State {
             mb_tmp: [0; 384],
             mb_info: vec![0; mbw * mbh],
             scratch: Vec::new(),
-            scratch2: Vec::new(),
-            prefix: Vec::new(),
+            blur: BlurBufs::default(),
+            mask_buf: Vec::new(),
+            row_buf: Vec::new(),
+            fill_mask: None,
+            dots: Vec::new(),
+            image: None,
             yuv: vec![0; w * h * 3 / 2],
             grid: None,
     }
@@ -151,6 +164,8 @@ pub extern "C" fn reset() {
     let s = st();
     s.paths.clear();
     s.sprites.clear();
+    s.dots.clear();
+    s.image = None;
     for l in s.layers.iter_mut() { l.clear(); }
     s.prev_valid = false;
 }
@@ -445,119 +460,380 @@ pub extern "C" fn grid_scaled(k: f32, tx: f32, ty: f32, opacity: f32) {
     }
 }
 
-// ------------------------------------------------------------------ sprites
+// ------------------------------------------------------------------ blur
 
-/// Three box blurs approximating a Gaussian (SVG feGaussianBlur's rule), on premultiplied RGBA.
-fn box_blur(src: &mut [u8], tmp: &mut Vec<u8>, pre: &mut Vec<u32>, w: usize, h: usize, sigma: f32) {
-    let d = (sigma * 3.0 * (2.0 * std::f32::consts::PI).sqrt() / 4.0 + 0.5).floor() as usize;
-    if d < 1 { return; }
-    tmp.resize(src.len(), 0);
-    // (size, offset) per pass; an even size alternates its centre, the third pass grows by one.
-    let passes: [(usize, usize); 3] = if d % 2 == 1 {
-        [(d, d / 2), (d, d / 2), (d, d / 2)]
+/// Gaussian blur of premultiplied RGBA in place; samples outside the buffer are transparent.
+///
+/// Large sigmas run on a downsampled copy: the sprite is box-averaged by `f` (a power of two
+/// chosen so the blur at the reduced size stays between 2 and 4 texels), blurred there with three
+/// box passes (SVG feGaussianBlur's rule), and upsampled bilinearly. The box filter and the
+/// bilinear upsample are themselves a blur of about f/2 px, which the reduced sigma subtracts. So
+/// a full-frame blur costs about the same at any sigma: a downsample, a cheap blur on 1/f² of the
+/// pixels, and an upsample.
+fn blur(px: &mut [u8], w: usize, h: usize, sigma: f32, b: &mut BlurBufs) {
+    if sigma <= 0.05 || w == 0 || h == 0 { return; }
+    let sigma = sigma.min(250.0);
+    let mut k = 0u32;
+    while sigma / (2u32 << k) as f32 >= 1.5 && k < 5 { k += 1; }
+    let f = 1usize << k;
+    let sc = if f == 1 { sigma } else { ((sigma / f as f32).powi(2) - 0.25).max(0.25).sqrt() };
+    let (sw, sh) = ((w + f - 1) >> k, (h + f - 1) >> k);
+    // Downsample into 12.4 fixed point (value * 16), so the low-res blur keeps some precision.
+    // Partial blocks at the right and bottom edges count the missing pixels as transparent.
+    b.a.clear();
+    if k == 0 {
+        b.a.extend(px.iter().map(|&v| (v as u16) << 4));
     } else {
-        [(d, d / 2), (d, d / 2 - 1), (d + 1, d / 2)]
+        b.sum.clear();
+        b.sum.resize(sw * sh * 4, 0);
+        for y in 0..h {
+            let row = &px[y * w * 4..(y + 1) * w * 4];
+            let sum = &mut b.sum[(y >> k) * sw * 4..((y >> k) + 1) * sw * 4];
+            for (t, block) in sum.chunks_exact_mut(4).zip(row.chunks(f * 4)) {
+                unsafe {
+                    let mut acc = v128_load(t.as_ptr() as *const v128);
+                    for p in block.chunks_exact(4) {
+                        let v = v128_load32_zero(p.as_ptr() as *const u32);
+                        acc = i32x4_add(acc, u32x4_extend_low_u16x8(u16x8_extend_low_u8x16(v)));
+                    }
+                    v128_store(t.as_mut_ptr() as *mut v128, acc);
+                }
+            }
+        }
+        if k == 1 {
+            b.a.extend(b.sum.iter().map(|&v| (v * 4) as u16));
+        } else {
+            let shift = 2 * k - 4;
+            let r = if shift > 0 { 1 << (shift - 1) } else { 0 };
+            b.a.extend(b.sum.iter().map(|&v| ((v + r) >> shift) as u16));
+        }
+    }
+    let d = (sc * 3.0 * (2.0 * std::f32::consts::PI).sqrt() / 4.0 + 0.5).floor() as usize;
+    if d >= 1 {
+        let passes: [(usize, usize); 3] = if d % 2 == 1 {
+            [(d, d / 2), (d, d / 2), (d, d / 2)]
+        } else {
+            [(d, d / 2), (d, d / 2 - 1), (d + 1, d / 2)]
+        };
+        for &(size, off) in &passes { box_h16(&mut b.a, &mut b.t, sw, sh, size, off); }
+        for &(size, off) in &passes { box_v16(&mut b.a, &mut b.t, &mut b.acc, sw, sh, size, off); }
+    }
+    if f == 1 {
+        for (o, &v) in px.iter_mut().zip(b.a.iter()) { *o = ((v + 8) >> 4).min(255) as u8; }
+        return;
+    }
+    // Back to 8-bit premultiplied pixels, then a bilinear upsample with packed lerps. Texel i is
+    // centred on pixel (i + 0.5) * f; clamped at the edges.
+    b.lo.clear();
+    b.lo.extend(b.a.chunks_exact(4).map(|c| {
+        let q = |v: u16| (((v + 8) >> 4).min(255)) as u32;
+        let a = q(c[3]);
+        q(c[0]).min(a) | (q(c[1]).min(a) << 8) | (q(c[2]).min(a) << 16) | (a << 24)
+    }));
+    let taps = |n: usize, m: usize| -> Vec<(usize, usize, u32)> {
+        (0..n)
+            .map(|p| {
+                let u = ((p as f32 + 0.5) / f as f32 - 0.5).max(0.0);
+                let i = (u as usize).min(m - 1);
+                let j = (i + 1).min(m - 1);
+                (i, j, ((u - i as f32) * 256.0) as u32)
+            })
+            .collect()
     };
-    for &(size, off) in &passes { box_h(src, tmp, pre, w, h, size, off); }
-    for &(size, off) in &passes { box_v(src, tmp, pre, w, h, size, off); }
+    let cols = taps(w, sw);
+    let rows = taps(h, sh);
+    b.row.clear();
+    b.row.resize(sw, 0);
+    let out = rows_u32(px);
+    for (y, &(r0, r1, fy)) in rows.iter().enumerate() {
+        for i in 0..sw { b.row[i] = lerp_px(b.lo[r0 * sw + i], b.lo[r1 * sw + i], fy); }
+        let o = &mut out[y * w..(y + 1) * w];
+        for (p, &(c0, c1, fx)) in o.iter_mut().zip(cols.iter()) { *p = lerp_px(b.row[c0], b.row[c1], fx); }
+    }
 }
 
-/// One horizontal box pass; samples outside the sprite are transparent.
-fn box_h(src: &mut [u8], tmp: &mut [u8], pre: &mut Vec<u32>, w: usize, h: usize, size: usize, off: usize) {
-    let div = size as u32;
-    pre.resize((w + 1) * 4, 0);
-    for y in 0..h {
-        let row = &src[y * w * 4..(y + 1) * w * 4];
-        let orow = &mut tmp[y * w * 4..(y + 1) * w * 4];
-        // Interleaved prefix sums: pre[4 * x + ch] = sum of channel ch over pixels [0, x).
-        pre[..4].fill(0);
-        for x in 0..w {
-            for ch in 0..4 { pre[4 * (x + 1) + ch] = pre[4 * x + ch] + row[4 * x + ch] as u32; }
-        }
-        for x in 0..w {
-            let lo = (x as isize - off as isize).clamp(0, w as isize) as usize;
-            let hi = (x as isize - off as isize + size as isize).clamp(0, w as isize) as usize;
-            for ch in 0..4 {
-                orow[4 * x + ch] = ((pre[4 * hi + ch] - pre[4 * lo + ch] + div / 2) / div) as u8;
+#[derive(Default)]
+struct BlurBufs {
+    a: Vec<u16>,
+    t: Vec<u16>,
+    acc: Vec<u32>,
+    sum: Vec<u32>,
+    lo: Vec<u32>,
+    row: Vec<u32>,
+}
+
+/// 65536 / size, for dividing window sums by multiply-and-shift.
+#[inline]
+fn recip(size: usize) -> u32 { (65536 + size as u32 / 2) / size as u32 }
+
+/// One horizontal box pass over 12.4 fixed-point RGBA: a running window, one pixel (four
+/// channels as u32 lanes) per step.
+fn box_h16(a: &mut Vec<u16>, t: &mut Vec<u16>, w: usize, h: usize, size: usize, off: usize) {
+    let m = recip(size);
+    t.clear();
+    t.resize(a.len(), 0);
+    unsafe {
+        let ld = |p: *const u16| u32x4_extend_low_u16x8(v128_load64_zero(p as *const u64));
+        let (mv, half) = (u32x4_splat(m), u32x4_splat(32768));
+        for y in 0..h {
+            let row = a.as_ptr().add(y * w * 4);
+            let out = t.as_mut_ptr().add(y * w * 4);
+            let mut acc = u32x4_splat(0);
+            // Window for output x is source [x - off, x - off + size).
+            for x in 0..(size - off - 1).min(w) { acc = i32x4_add(acc, ld(row.add(x * 4))); }
+            for x in 0..w {
+                let add = x + size - off - 1;
+                if add < w { acc = i32x4_add(acc, ld(row.add(add * 4))); }
+                let q = u32x4_shr(i32x4_add(i32x4_mul(acc, mv), half), 16);
+                v128_store64_lane::<0>(u16x8_narrow_i32x4(q, q), out.add(x * 4) as *mut u64);
+                if x >= off { acc = i32x4_sub(acc, ld(row.add((x - off) * 4))); }
             }
         }
     }
-    src.copy_from_slice(tmp);
+    std::mem::swap(a, t);
 }
 
-/// One vertical box pass, as a running window down each column (all columns at once per row).
-fn box_v(src: &mut [u8], tmp: &mut [u8], acc: &mut Vec<u32>, w: usize, h: usize, size: usize, off: usize) {
-    let div = size as u32;
+/// One vertical box pass: a running window down every column at once, row by row, eight
+/// channels per step (window sums stay under 2^16: values are at most 4080 and windows short).
+fn box_v16(a: &mut Vec<u16>, t: &mut Vec<u16>, _acc: &mut Vec<u32>, w: usize, h: usize, size: usize, off: usize) {
+    if size == 1 { return; }
+    let m = recip(size) as u16;
     let n = w * 4;
-    acc.clear();
-    acc.resize(n, 0);
-    // Window for output row y is source rows [y - off, y - off + size).
-    let add = |acc: &mut [u32], src: &[u8], r: isize, sign: bool| {
-        if r < 0 || r >= h as isize { return; }
-        let row = &src[r as usize * n..(r as usize + 1) * n];
-        if sign { for i in 0..n { acc[i] += row[i] as u32; } } else { for i in 0..n { acc[i] -= row[i] as u32; } }
-    };
-    for r in -(off as isize)..(size as isize - off as isize - 1) { add(acc, src, r, true); }
-    for y in 0..h {
-        add(acc, src, y as isize - off as isize + size as isize - 1, true);
-        let o = &mut tmp[y * n..(y + 1) * n];
-        for i in 0..n { o[i] = ((acc[i] + div / 2) / div) as u8; }
-        add(acc, src, y as isize - off as isize, false);
+    t.clear();
+    t.resize(a.len(), 0);
+    let mut acc = vec![0u16; n + 8];
+    let rows = |a: &[u16], r: usize| a.as_ptr().wrapping_add(r * n);
+    unsafe {
+        let mv = u16x8_splat(m);
+        let half = u32x4_splat(32768);
+        let step = |acc: &mut [u16], src: *const u16, add: bool| {
+            let mut i = 0;
+            while i + 8 <= n {
+                let p = acc.as_mut_ptr().add(i) as *mut v128;
+                let v = v128_load(src.add(i) as *const v128);
+                v128_store(p, if add { i16x8_add(v128_load(p), v) } else { i16x8_sub(v128_load(p), v) });
+                i += 8;
+            }
+            for j in i..n { acc[j] = if add { acc[j].wrapping_add(*src.add(j)) } else { acc[j].wrapping_sub(*src.add(j)) }; }
+        };
+        for r in 0..(size - off - 1).min(h) { step(&mut acc, rows(a, r), true); }
+        for y in 0..h {
+            let add = y + size - off - 1;
+            if add < h { step(&mut acc, rows(a, add), true); }
+            let o = t.as_mut_ptr().add(y * n);
+            let mut i = 0;
+            while i + 8 <= n {
+                let v = v128_load(acc.as_ptr().add(i) as *const v128);
+                let lo = u32x4_shr(i32x4_add(u32x4_extmul_low_u16x8(v, mv), half), 16);
+                let hi = u32x4_shr(i32x4_add(u32x4_extmul_high_u16x8(v, mv), half), 16);
+                v128_store(o.add(i) as *mut v128, u16x8_narrow_i32x4(lo, hi));
+                i += 8;
+            }
+            for j in i..n { *o.add(j) = ((acc[j] as u32 * m as u32 + 32768) >> 16) as u16; }
+            if y >= off { step(&mut acc, rows(a, y - off), false); }
+        }
     }
-    src.copy_from_slice(tmp);
+    std::mem::swap(a, t);
 }
 
-/// Composites a sprite over the frame with `opacity`, blurred by `sigma` (frame px) first.
+// ------------------------------------------------------------------ draw arguments
+
+/// Argument block for calls that take more than a handful of numbers (draw_ex, fill_ex,
+/// sprite_fill_ex): JS writes floats here, then makes the call. Layout:
+///
+/// * draw_ex: 0 sprite, 1 opacity, 2 blur sigma, 3 blend mode;
+/// * fill_ex: 0 path, 1 alpha, 2 blend mode, 3 rgb, 23 even-odd, 24 paint (0 solid, 1 linear,
+///   2 radial), 25..29 gradient geometry (x0 y0 x1 y1 or cx cy r), 29 stop count, then
+///   (offset, r, g, b, a) per stop from 30;
+/// * both: 4..8 clip rectangle, 8..14 transform, 14 mask sprite (-1 none), 15 mask mode
+///   (0 alpha, 1 luma), 16 invert, 17..23 mask transform.
+static mut ARGS: [f32; 96] = [0.0; 96];
+const MAX_STOPS: usize = 13;
+
 #[no_mangle]
-pub extern "C" fn sprite_draw(id: i32, opacity: f32, sigma: f32) {
-    let (w, h) = (st().w, st().h);
-    sprite_draw_clip(id, opacity, sigma, 0.0, 0.0, w as f32, h as f32);
+#[allow(static_mut_refs)]
+pub extern "C" fn args_ptr() -> *mut f32 {
+    unsafe { ARGS.as_mut_ptr() }
 }
 
-/// sprite_draw, limited to the frame rectangle [cx0, cx1) x [cy0, cy1) (rounded to whole pixels):
-/// the template's clip-path wipes.
-#[no_mangle]
-pub extern "C" fn sprite_draw_clip(id: i32, opacity: f32, sigma: f32, cx0: f32, cy0: f32, cx1: f32, cy1: f32) {
-    if opacity <= 0.0 { return; }
-    let s = st();
-    let (W, H) = (s.w, s.h);
-    let sp = &s.sprites[id as usize];
-    let (w, h) = (sp.pix.width() as usize, sp.pix.height() as usize);
-    let (sx, sy) = (sp.x, sp.y);
-    // Clip to the frame and the clip rectangle once (in sprite pixels), then blend whole rows.
-    let cx0 = (cx0.round() as i32).max(0);
-    let cy0 = (cy0.round() as i32).max(0);
-    let cx1 = (cx1.round() as i32).min(W as i32);
-    let cy1 = (cy1.round() as i32).min(H as i32);
-    let x0 = (cx0 - sx).max(0) as usize;
-    let x1 = ((cx1 - sx).min(w as i32)).max(0) as usize;
-    let y0 = (cy0 - sy).max(0) as usize;
-    let y1 = ((cy1 - sy).min(h as i32)).max(0) as usize;
-    if x1 <= x0 || y1 <= y0 { return; }
-    let src: &[u8] = if sigma > 0.05 {
-        s.scratch.clear();
-        s.scratch.extend_from_slice(sp.pix.data());
-        box_blur(&mut s.scratch, &mut s.scratch2, &mut s.prefix, w, h, sigma);
-        &s.scratch
-    } else {
-        sp.pix.data()
-    };
-    let op = (opacity.clamp(0.0, 1.0) * 256.0) as u16;
-    let out = s.frame.data_mut();
-    for y in y0..y1 {
-        let fy = (sy + y as i32) as usize;
-        let fx0 = (sx + x0 as i32) as usize;
-        let d = &mut out[(fy * W + fx0) * 4..(fy * W + fx0 + (x1 - x0)) * 4];
-        blend_row(d, &src[(y * w + x0) * 4..(y * w + x1) * 4], op);
+#[allow(static_mut_refs)]
+fn args() -> [f32; 96] {
+    unsafe { ARGS }
+}
+
+/// Blend modes for sprites and fills.
+const NORMAL: u32 = 0;
+const ADD: u32 = 1;
+const SCREEN: u32 = 2;
+const MULTIPLY: u32 = 3;
+const OVERLAY: u32 = 4;
+
+fn skia_blend(mode: u32) -> tiny_skia::BlendMode {
+    use tiny_skia::BlendMode as B;
+    match mode { ADD => B::Plus, SCREEN => B::Screen, MULTIPLY => B::Multiply, OVERLAY => B::Overlay, _ => B::SourceOver }
+}
+
+/// An affine transform [a b c d e f]: x' = a x + c y + e, y' = b x + d y + f.
+#[derive(Clone, Copy)]
+struct Affine([f32; 6]);
+
+impl Affine {
+    fn at(a: &[f32]) -> Affine { Affine([a[0], a[1], a[2], a[3], a[4], a[5]]) }
+    fn apply(&self, x: f32, y: f32) -> (f32, f32) {
+        let m = &self.0;
+        (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
     }
-    mark_rect(s, (sx + x0 as i32) as f32, (sy + y0 as i32) as f32, (sx + x1 as i32) as f32, (sy + y1 as i32) as f32);
+    fn invert(&self) -> Option<Affine> {
+        let [a, b, c, d, e, f] = self.0;
+        let det = a * d - b * c;
+        if det.abs() < 1e-12 { return None; }
+        let i = 1.0 / det;
+        Some(Affine([d * i, -b * i, -c * i, a * i, (c * f - d * e) * i, (b * e - a * f) * i]))
+    }
+    /// Integer translation, if that is all it is.
+    fn offset(&self) -> Option<(i32, i32)> {
+        let [a, b, c, d, e, f] = self.0;
+        (a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0 && e == e.round() && f == f.round()).then(|| (e as i32, f as i32))
+    }
+    /// Bounds of the rectangle [x0, x1) x [y0, y1) after the transform.
+    fn bounds(&self, x0: f32, y0: f32, x1: f32, y1: f32) -> (f32, f32, f32, f32) {
+        let pts = [self.apply(x0, y0), self.apply(x1, y0), self.apply(x0, y1), self.apply(x1, y1)];
+        let mut b = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for (x, y) in pts { b = (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y)); }
+        b
+    }
 }
 
-/// A sprite's premultiplied RGBA pixels, for content drawn in JS (gradients).
-#[no_mangle]
-pub extern "C" fn sprite_ptr(id: i32) -> *mut u8 {
-    st().sprites[id as usize].pix.data_mut().as_mut_ptr()
+/// An integer rectangle [x0, x1) x [y0, y1) in frame pixels.
+#[derive(Clone, Copy)]
+struct Rect { x0: i32, y0: i32, x1: i32, y1: i32 }
+
+impl Rect {
+    fn frame(s: &State) -> Rect { Rect { x0: 0, y0: 0, x1: s.w as i32, y1: s.h as i32 } }
+    fn and(self, o: Rect) -> Rect { Rect { x0: self.x0.max(o.x0), y0: self.y0.max(o.y0), x1: self.x1.min(o.x1), y1: self.y1.min(o.y1) } }
+    fn empty(&self) -> bool { self.x1 <= self.x0 || self.y1 <= self.y0 }
+    /// The clip rectangle at args[4..8], rounded to whole pixels.
+    fn clip(a: &[f32]) -> Rect {
+        let r = |v: f32| v.round().clamp(-1e6, 1e6) as i32;
+        Rect { x0: r(a[4]), y0: r(a[5]), x1: r(a[6]), y1: r(a[7]) }
+    }
+    fn outer(b: (f32, f32, f32, f32)) -> Rect {
+        let c = |v: f32| v.clamp(-1e6, 1e6);
+        Rect { x0: c(b.0).floor() as i32, y0: c(b.1).floor() as i32, x1: c(b.2).ceil() as i32, y1: c(b.3).ceil() as i32 }
+    }
 }
+
+// ------------------------------------------------------------------ sampling
+
+/// Two premultiplied pixels mixed by f/256, two channels per multiply.
+#[inline(always)]
+fn lerp_px(a: u32, b: u32, f: u32) -> u32 {
+    let g = 256 - f;
+    let rb = (((a & 0x00ff_00ff) * g + (b & 0x00ff_00ff) * f) >> 8) & 0x00ff_00ff;
+    let ag = (((a >> 8) & 0x00ff_00ff) * g + ((b >> 8) & 0x00ff_00ff) * f) & 0xff00_ff00;
+    rb | ag
+}
+
+/// Bilinear samples of a premultiplied sprite (w x h, as u32 pixels) along one frame row: dest
+/// pixel X maps to sprite texel coordinates (u0 + X du, v0 + X dv), with texel centres on
+/// integers. Taps outside the sprite are transparent. Fixed point 16.16 so the row is
+/// integer-only after setup.
+fn sample_row(pix: &[u32], w: usize, h: usize, u0: f32, v0: f32, du: f32, dv: f32, out: &mut [u32]) {
+    let fx = |v: f32| (v.clamp(-3e4, 3e4) * 65536.0) as i32;
+    let (mut u, mut v) = (fx(u0), fx(v0));
+    let (du, dv) = (fx(du), fx(dv));
+    let (wi, hi) = (w as i32, h as i32);
+    for o in out.iter_mut() {
+        let (x, y) = (u >> 16, v >> 16);
+        let (fu, fv) = (((u >> 8) & 255) as u32, ((v >> 8) & 255) as u32);
+        *o = if x >= 0 && y >= 0 && x + 1 < wi && y + 1 < hi {
+            let i = y as usize * w + x as usize;
+            let (a, b, c, d) = (pix[i], pix[i + 1], pix[i + w], pix[i + w + 1]);
+            // Sprites are mostly transparent (text, shapes): skip the maths for empty taps.
+            if a | b | c | d == 0 { 0 } else { lerp_px(lerp_px(a, b, fu), lerp_px(c, d, fu), fv) }
+        } else if x < -1 || y < -1 || x >= wi || y >= hi {
+            0
+        } else {
+            let t = |x: i32, y: i32| if x >= 0 && y >= 0 && x < wi && y < hi { pix[y as usize * w + x as usize] } else { 0 };
+            lerp_px(lerp_px(t(x, y), t(x + 1, y), fu), lerp_px(t(x, y + 1), t(x + 1, y + 1), fu), fv)
+        };
+        u = u.wrapping_add(du);
+        v = v.wrapping_add(dv);
+    }
+}
+
+fn as_u32(data: &[u8]) -> &[u32] {
+    let (pre, mid, post) = unsafe { data.align_to::<u32>() };
+    debug_assert!(pre.is_empty() && post.is_empty());
+    mid
+}
+
+/// Where a sprite lands: its pixels (blurred or not), origin and size, and the transform.
+struct Placed<'a> {
+    pix: &'a [u32],
+    x: i32,
+    y: i32,
+    w: usize,
+    h: usize,
+    tf: Affine,
+}
+
+impl<'a> Placed<'a> {
+    /// Frame-pixel bounds of the placed sprite.
+    fn bounds(&self) -> Rect {
+        match self.tf.offset() {
+            Some((dx, dy)) => Rect { x0: self.x + dx, y0: self.y + dy, x1: self.x + dx + self.w as i32, y1: self.y + dy + self.h as i32 },
+            None => Rect::outer(self.tf.bounds(self.x as f32, self.y as f32, (self.x + self.w as i32) as f32, (self.y + self.h as i32) as f32)),
+        }
+    }
+
+    /// The columns [a, b) of frame row `fy`, within [x0, x1), that can sample the sprite at all:
+    /// a rotated sprite's bounding box is mostly empty.
+    fn span(&self, fy: i32, x0: i32, x1: i32) -> (i32, i32) {
+        if self.tf.offset().is_some() { return (x0, x1); }
+        let Some(inv) = self.tf.invert() else { return (x0, x0) };
+        let (px, py) = inv.apply(x0 as f32 + 0.5, fy as f32 + 0.5);
+        let [a, b, ..] = inv.0;
+        let (mut lo, mut hi) = (0f32, (x1 - x0) as f32);
+        // Texel coordinate t0 + k * d must stay in (-1, n) for some tap to be inside.
+        for (t0, d, n) in [(px - self.x as f32 - 0.5, a, self.w as f32), (py - self.y as f32 - 0.5, b, self.h as f32)] {
+            if d.abs() < 1e-9 {
+                if t0 <= -1.0 || t0 >= n { return (x0, x0); }
+                continue;
+            }
+            let (k0, k1) = ((-1.0 - t0) / d, (n - t0) / d);
+            lo = lo.max(k0.min(k1));
+            hi = hi.min(k0.max(k1));
+        }
+        if hi <= lo { return (x0, x0); }
+        // One pixel of slack on each side for rounding; the sampler handles the edges.
+        ((x0 + lo.floor() as i32 - 1).max(x0), (x0 + hi.ceil() as i32 + 1).min(x1))
+    }
+
+    /// Fills `out` with the sprite's pixels for frame row `fy`, columns [fx0, fx0 + out.len()).
+    fn row(&self, fy: i32, fx0: i32, out: &mut [u32]) {
+        if let Some((dx, dy)) = self.tf.offset() {
+            out.fill(0);
+            let (sx, sy) = (fx0 - self.x - dx, fy - self.y - dy);
+            if sy < 0 || sy as usize >= self.h { return; }
+            let a = sx.max(0).min(self.w as i32);
+            let b = (sx + out.len() as i32).max(0).min(self.w as i32);
+            if b > a {
+                let r = sy as usize * self.w;
+                out[(a - sx) as usize..(b - sx) as usize].copy_from_slice(&self.pix[r + a as usize..r + b as usize]);
+            }
+            return;
+        }
+        let Some(inv) = self.tf.invert() else { out.fill(0); return };
+        // Pixel centre (X + 0.5, fy + 0.5) -> frame coordinates of the untransformed sprite ->
+        // texel coordinates (centres on integers).
+        let (px, py) = inv.apply(fx0 as f32 + 0.5, fy as f32 + 0.5);
+        let [a, b, ..] = inv.0;
+        sample_row(self.pix, self.w, self.h, px - self.x as f32 - 0.5, py - self.y as f32 - 0.5, a, b, out);
+    }
+}
+
+// ------------------------------------------------------------------ blending
 
 /// dst = src * op + dst * (1 - src.a * op) on premultiplied RGBA over an opaque frame,
 /// four pixels per step in wasm SIMD.
@@ -593,9 +869,548 @@ fn blend_row(dst: &mut [u8], src: &[u8], op: u16) {
         if a == 0 { continue; }
         for ch in 0..3 {
             let sv = (src[i * 4 + ch] as u32 * op) >> 8;
-            dst[i * 4 + ch] = (sv + (dst[i * 4 + ch] as u32 * (255 - a) + 127) / 255) as u8;
+            dst[i * 4 + ch] = (sv + (dst[i * 4 + ch] as u32 * (255 - a) + 127) / 255).min(255) as u8;
         }
     }
+}
+
+/// x / 255, rounded, for x < 65536.
+#[inline(always)]
+fn div255(x: u32) -> u32 { (x + 128 + ((x + 128) >> 8)) >> 8 }
+
+/// The separable blend modes over an opaque frame, from premultiplied source (W3C compositing:
+/// Cr = (1 - as) Cd + as B(Cd, Cs / as)).
+fn blend_mode_row(dst: &mut [u8], src: &[u8], op: u16, mode: u32) {
+    let op = op as u32;
+    for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+        let a = (s[3] as u32 * op) >> 8;
+        if a == 0 { continue; }
+        for ch in 0..3 {
+            let sc = ((s[ch] as u32 * op) >> 8).min(a);
+            let dc = d[ch] as u32;
+            let v = match mode {
+                ADD => dc + sc,
+                SCREEN => sc + dc - div255(sc * dc),
+                MULTIPLY => div255(sc * dc) + div255(dc * (255 - a)),
+                _ => {
+                    let t = if dc <= 127 { 2 * div255(sc * dc) } else { a - (2 * div255((255 - dc) * (a - sc))).min(a) };
+                    div255(dc * (255 - a)) + t
+                }
+            };
+            d[ch] = v.min(255) as u8;
+        }
+    }
+}
+
+/// Multiplies premultiplied pixels by mask values (0..255).
+fn apply_mask(px: &mut [u32], m: &[u8]) {
+    for (p, &k) in px.iter_mut().zip(m) {
+        if k == 255 { continue; }
+        let k = k as u32 + (k >> 7) as u32; // 0..256
+        let rb = (((*p & 0x00ff_00ff) * k) >> 8) & 0x00ff_00ff;
+        let ag = (((*p >> 8) & 0x00ff_00ff) * k) & 0xff00_ff00;
+        *p = rb | ag;
+    }
+}
+
+/// Fills `out` (rect r, row-major) with mask values from the mask spec in args[14..23]: a
+/// sprite's alpha or luma, placed by its own transform, optionally inverted. Rows outside the
+/// mask sprite are 0 (255 inverted).
+fn build_mask(s: &State, a: &[f32], r: Rect, out: &mut Vec<u8>, row: &mut Vec<u32>) {
+    let (w, h) = ((r.x1 - r.x0) as usize, (r.y1 - r.y0) as usize);
+    out.clear();
+    out.resize(w * h, 0);
+    let sp = &s.sprites[a[14] as usize];
+    let placed = Placed { pix: as_u32(sp.pix.data()), x: sp.x, y: sp.y, w: sp.pix.width() as usize, h: sp.pix.height() as usize, tf: Affine::at(&a[17..23]) };
+    let luma = a[15] as u32 == 1;
+    let invert = a[16] != 0.0;
+    row.resize(w, 0);
+    for y in 0..h {
+        placed.row(r.y0 + y as i32, r.x0, &mut row[..w]);
+        let o = &mut out[y * w..(y + 1) * w];
+        for (m, &p) in o.iter_mut().zip(row.iter()) {
+            let v = if luma {
+                // Premultiplied, so this is luma x alpha.
+                ((p & 255) * 54 + ((p >> 8) & 255) * 183 + ((p >> 16) & 255) * 19) >> 8
+            } else {
+                p >> 24
+            };
+            *m = if invert { 255 - v as u8 } else { v as u8 };
+        }
+    }
+}
+
+// ------------------------------------------------------------------ sprites
+
+/// Composites a sprite over the frame. Arguments in ARGS (see there): opacity, blur sigma (frame
+/// px, applied before the transform), blend mode, clip rectangle, an affine transform sampled
+/// bilinearly (an integer translation copies pixels), and an optional mask.
+#[no_mangle]
+pub extern "C" fn draw_ex() {
+    let a = args();
+    let opacity = a[1];
+    if !(opacity > 0.0) { return; }
+    let s = st();
+    let id = a[0] as usize;
+    let (w, h) = (s.sprites[id].pix.width() as usize, s.sprites[id].pix.height() as usize);
+    let (sx, sy) = (s.sprites[id].x, s.sprites[id].y);
+    let blurred = a[2] > 0.05;
+    if blurred {
+        s.scratch.clear();
+        s.scratch.extend_from_slice(s.sprites[id].pix.data());
+        blur(&mut s.scratch, w, h, a[2], &mut s.blur);
+    }
+    let src: &[u8] = if blurred { &s.scratch } else { s.sprites[id].pix.data() };
+    let placed = Placed { pix: as_u32(src), x: sx, y: sy, w, h, tf: Affine::at(&a[8..14]) };
+    let r = placed.bounds().and(Rect::clip(&a)).and(Rect::frame(s));
+    if r.empty() { return; }
+    let masked = a[14] >= 0.0;
+    let mut mask = std::mem::take(&mut s.mask_buf);
+    let mut row = std::mem::take(&mut s.row_buf);
+    if masked { build_mask(s, &a, r, &mut mask, &mut row); }
+    let rw = (r.x1 - r.x0) as usize;
+    row.resize(rw, 0);
+    let op = (opacity.clamp(0.0, 1.0) * 256.0) as u16;
+    let mode = a[3] as u32;
+    let W = s.w;
+    let out = s.frame.data_mut();
+    let direct = if masked { None } else { placed.tf.offset() };
+    for y in r.y0..r.y1 {
+        let o = (y as usize * W + r.x0 as usize) * 4;
+        let d = &mut out[o..o + rw * 4];
+        if let Some((dx, dy)) = direct {
+            // Untransformed and unmasked: blend straight from the sprite's rows.
+            let i = ((y - sy - dy) as usize * w + (r.x0 - sx - dx) as usize) * 4;
+            let srow = &src[i..i + rw * 4];
+            if mode == NORMAL { blend_row(d, srow, op) } else { blend_mode_row(d, srow, op, mode) }
+            continue;
+        }
+        let (sa, sb) = placed.span(y, r.x0, r.x1);
+        if sb <= sa { continue; }
+        let (ka, kb) = ((sa - r.x0) as usize, (sb - r.x0) as usize);
+        placed.row(y, sa, &mut row[ka..kb]);
+        if masked { apply_mask(&mut row[ka..kb], &mask[(y - r.y0) as usize * rw + ka..(y - r.y0) as usize * rw + kb]); }
+        let srow = unsafe { std::slice::from_raw_parts(row.as_ptr().add(ka) as *const u8, (kb - ka) * 4) };
+        let d = &mut d[ka * 4..kb * 4];
+        if mode == NORMAL { blend_row(d, srow, op) } else { blend_mode_row(d, srow, op, mode) }
+    }
+    s.mask_buf = mask;
+    s.row_buf = row;
+    mark_rect(s, r.x0 as f32, r.y0 as f32, r.x1 as f32, r.y1 as f32);
+}
+
+/// The paint described at args[1..4] and args[24..]: a solid colour or a gradient, in path units.
+fn paint_ex(a: &[f32], alpha: f32, rgb: u32, blend: u32) -> Paint<'static> {
+    let mut p = paint(rgb, alpha);
+    p.blend_mode = skia_blend(blend);
+    let kind = a[24] as u32;
+    if kind == 0 { return p; }
+    let n = (a[29] as usize).min(MAX_STOPS);
+    let stops: Vec<GradientStop> = (0..n)
+        .map(|i| {
+            let o = 30 + i * 5;
+            let c = Color::from_rgba(a[o + 1], a[o + 2], a[o + 3], (a[o + 4] * alpha).clamp(0.0, 1.0)).unwrap_or(Color::BLACK);
+            GradientStop::new(a[o], c)
+        })
+        .collect();
+    let shader = if kind == 1 {
+        LinearGradient::new(Point::from_xy(a[25], a[26]), Point::from_xy(a[27], a[28]), stops, SpreadMode::Pad, Transform::identity())
+    } else {
+        RadialGradient::new(Point::from_xy(a[25], a[26]), Point::from_xy(a[25], a[26]), a[27], stops, SpreadMode::Pad, Transform::identity())
+    };
+    if let Some(sh) = shader { p.shader = sh; }
+    p
+}
+
+/// Fills a path into a sprite with the paint in ARGS (solid or gradient, blend mode). The
+/// transform (args[8..14]) maps path units to frame pixels.
+#[no_mangle]
+pub extern "C" fn sprite_fill_ex(id: i32) {
+    let a = args();
+    let s = st();
+    let p = &s.paths[a[0] as usize];
+    let sp = &mut s.sprites[id as usize];
+    let t = Affine::at(&a[8..14]).0;
+    let t = tf(t[0], t[1], t[2], t[3], t[4], t[5]).post_translate(-sp.x as f32, -sp.y as f32);
+    let rule = if a[23] != 0.0 { FillRule::EvenOdd } else { FillRule::Winding };
+    sp.pix.fill_path(p, &paint_ex(&a, a[1], a[3] as u32, a[2] as u32), rule, t, None);
+}
+
+/// Live vector fill straight into the frame, with the paint, blend mode, clip rectangle and mask
+/// in ARGS.
+#[no_mangle]
+pub extern "C" fn fill_ex() {
+    let a = args();
+    let alpha = a[1];
+    if !(alpha > 0.0) { return; }
+    let s = st();
+    let t = Affine::at(&a[8..14]);
+    let bb = s.paths[a[0] as usize].bounds();
+    let r = Rect::outer(t.bounds(bb.left(), bb.top(), bb.right(), bb.bottom()));
+    // One pixel of antialiasing on each side.
+    let r = Rect { x0: r.x0 - 1, y0: r.y0 - 1, x1: r.x1 + 1, y1: r.y1 + 1 }.and(Rect::frame(s));
+    let clip = Rect::clip(&a);
+    let rc = r.and(clip);
+    if rc.empty() { return; }
+    let masked = a[14] >= 0.0;
+    let clipped = rc.x0 > r.x0 || rc.y0 > r.y0 || rc.x1 < r.x1 || rc.y1 < r.y1;
+    let rule = if a[23] != 0.0 { FillRule::EvenOdd } else { FillRule::Winding };
+    let m = t.0;
+    let t = tf(m[0], m[1], m[2], m[3], m[4], m[5]);
+    let p = paint_ex(&a, alpha, a[3] as u32, a[2] as u32);
+    if masked || clipped {
+        // A frame-size mask, written only inside the fill's bounds (tiny-skia reads nothing else).
+        let (W, H) = (s.w, s.h);
+        let mut fm = s.fill_mask.take().unwrap_or_else(|| Mask::new(W as u32, H as u32).unwrap());
+        let mut tmp = std::mem::take(&mut s.mask_buf);
+        let mut row = std::mem::take(&mut s.row_buf);
+        if masked { build_mask(s, &a, r, &mut tmp, &mut row); }
+        let rw = (r.x1 - r.x0) as usize;
+        let md = fm.data_mut();
+        for y in r.y0..r.y1 {
+            let o = y as usize * W + r.x0 as usize;
+            for x in 0..rw {
+                let inside = y >= rc.y0 && y < rc.y1 && (r.x0 + x as i32) >= rc.x0 && (r.x0 + x as i32) < rc.x1;
+                md[o + x] = if !inside { 0 } else if masked { tmp[(y - r.y0) as usize * rw + x] } else { 255 };
+            }
+        }
+        s.frame.fill_path(&s.paths[a[0] as usize], &p, rule, t, Some(&fm));
+        s.fill_mask = Some(fm);
+        s.mask_buf = tmp;
+        s.row_buf = row;
+    } else {
+        s.frame.fill_path(&s.paths[a[0] as usize], &p, rule, t, None);
+    }
+    mark_rect(s, rc.x0 as f32, rc.y0 as f32, rc.x1 as f32, rc.y1 as f32);
+}
+
+/// Multiplies a sprite by a path's coverage (frame coordinates): rounded image corners, shaped
+/// cut-outs. `invert` keeps what is outside the path instead.
+#[no_mangle]
+pub extern "C" fn sprite_clip(id: i32, path: i32, evenodd: i32, invert: i32) {
+    let s = st();
+    let p = &s.paths[path as usize];
+    let sp = &mut s.sprites[id as usize];
+    let (w, h) = (sp.pix.width(), sp.pix.height());
+    let mut m = Mask::new(w, h).unwrap();
+    let rule = if evenodd != 0 { FillRule::EvenOdd } else { FillRule::Winding };
+    m.fill_path(p, rule, true, Transform::from_translate(-sp.x as f32, -sp.y as f32));
+    let md: Vec<u8> = if invert != 0 { m.data().iter().map(|v| 255 - v).collect() } else { m.data().to_vec() };
+    let px = rows_u32(sp.pix.data_mut());
+    apply_mask(px, &md);
+}
+
+/// A new sprite holding the drop shadow (or glow) of `src`: its alpha, blurred by `sigma`, in
+/// colour `rgb` at `alpha`, grown by `spread` px first. Same frame position as `src`; draw it
+/// with an offset transform.
+#[no_mangle]
+pub extern "C" fn sprite_shadow(src: i32, sigma: f32, rgb: u32, alpha: f32, spread: f32) -> i32 {
+    let s = st();
+    let pad = (sigma * 3.0).ceil() as usize + spread.max(0.0).ceil() as usize + 2;
+    let sp = &s.sprites[src as usize];
+    let (w, h) = (sp.pix.width() as usize, sp.pix.height() as usize);
+    let (nw, nh) = (w + 2 * pad, h + 2 * pad);
+    let mut a = vec![0u8; nw * nh * 4];
+    let srcpx = sp.pix.data();
+    for y in 0..h {
+        for x in 0..w {
+            let v = srcpx[(y * w + x) * 4 + 3];
+            let o = ((y + pad) * nw + x + pad) * 4;
+            a[o..o + 4].fill(v);
+        }
+    }
+    let sp_r = spread.max(0.0).round() as usize;
+    if sp_r > 0 {
+        // Dilate: max over a (2r + 1)^2 square, as two 1-D passes.
+        let mut t = a.clone();
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut m = 0;
+                for k in x.saturating_sub(sp_r)..(x + sp_r + 1).min(nw) { m = m.max(a[(y * nw + k) * 4]); }
+                t[(y * nw + x) * 4..(y * nw + x) * 4 + 4].fill(m);
+            }
+        }
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut m = 0;
+                for k in y.saturating_sub(sp_r)..(y + sp_r + 1).min(nh) { m = m.max(t[(k * nw + x) * 4]); }
+                a[(y * nw + x) * 4..(y * nw + x) * 4 + 4].fill(m);
+            }
+        }
+    }
+    let (sx, sy) = (sp.x - pad as i32, sp.y - pad as i32);
+    blur(&mut a, nw, nh, sigma, &mut s.blur);
+    let k = (alpha.clamp(0.0, 1.0) * 256.0) as u32;
+    let c = [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255];
+    for p in a.chunks_exact_mut(4) {
+        let v = (p[3] as u32 * k) >> 8;
+        for ch in 0..3 { p[ch] = div255(c[ch] * v) as u8; }
+        p[3] = v as u8;
+    }
+    let mut pix = Pixmap::new(nw as u32, nh as u32).unwrap();
+    pix.data_mut().copy_from_slice(&a);
+    s.sprites.push(Sprite { x: sx, y: sy, pix });
+    (s.sprites.len() - 1) as i32
+}
+
+// ------------------------------------------------------------------ dot matrix
+
+/// A field of dots (a halftone of some source), each with a value, colour and reveal threshold.
+struct Dots {
+    /// x, y (top-left, frame px), value 0..1, threshold, rgb.
+    dots: Vec<(i32, i32, f32, f32, u32)>,
+    /// Coverage stamps (tile x tile) for nine sizes, from nothing (0) to the full dot (8).
+    stamps: Vec<Vec<u8>>,
+    tile: usize,
+}
+
+/// Registers a dot field: `n` dots of 5 floats each (x, y, value, threshold, rgb) at `ptr`,
+/// drawn as `size` px squares (or circles when `round`).
+#[no_mangle]
+pub unsafe extern "C" fn dots_new(ptr: *const f32, n: usize, size: f32, round: i32) -> i32 {
+    let d = std::slice::from_raw_parts(ptr, n * 5);
+    let tile = size.ceil().max(1.0) as usize;
+    let mut stamps = vec![vec![0u8; tile * tile]];
+    for k in 1..=8 {
+        let r = size * k as f32 / 8.0;
+        let c = tile as f32 / 2.0;
+        let mut pb = PathBuilder::new();
+        if round != 0 {
+            pb.push_circle(c, c, r / 2.0);
+        } else {
+            pb.push_rect(tiny_skia::Rect::from_xywh(c - r / 2.0, c - r / 2.0, r, r).unwrap());
+        }
+        let mut m = Mask::new(tile as u32, tile as u32).unwrap();
+        if let Some(p) = pb.finish() { m.fill_path(&p, FillRule::Winding, true, Transform::identity()); }
+        stamps.push(m.data().to_vec());
+    }
+    let dots = d.chunks_exact(5).map(|c| (c[0] as i32, c[1] as i32, c[2], c[3], c[4] as u32)).collect();
+    let s = st();
+    s.dots.push(Dots { dots, stamps, tile });
+    (s.dots.len() - 1) as i32
+}
+
+/// Draws a dot field at reveal `progress`: a dot shows once progress passes its threshold,
+/// fading (or growing, with `grow`) in over `softness`. `rgb` < 0 uses each dot's own colour;
+/// `reverse` reveals in the opposite order (thresholds 1 - t).
+#[no_mangle]
+pub extern "C" fn dots_draw(id: i32, progress: f32, softness: f32, opacity: f32, grow: i32, rgb: i32, reverse: i32) {
+    if !(opacity > 0.0) { return; }
+    let s = st();
+    let (W, H) = (s.w as i32, s.h as i32);
+    let f = &s.dots[id as usize];
+    let tile = f.tile as i32;
+    let out = rows_u32(s.frame.data_mut());
+    let mut b = Rect { x0: i32::MAX, y0: i32::MAX, x1: i32::MIN, y1: i32::MIN };
+    for &(x, y, v, t, c) in &f.dots {
+        let t = if reverse != 0 { 1.0 - t } else { t };
+        let k = if softness > 0.0 { ((progress - t) / softness).clamp(0.0, 1.0) } else if progress >= t { 1.0 } else { 0.0 };
+        if k <= 0.0 { continue; }
+        let (level, a) = if grow != 0 { ((k * 8.0).ceil() as usize, v * opacity) } else { (8, v * opacity * k) };
+        let a = (a.clamp(0.0, 1.0) * 256.0) as u32;
+        if a == 0 || level == 0 { continue; }
+        let c = if rgb >= 0 { rgb as u32 } else { c };
+        let (cr, cg, cb) = ((c >> 16) & 255, (c >> 8) & 255, c & 255);
+        let stamp = &f.stamps[level.min(8)];
+        for ty in 0..tile {
+            let fy = y + ty;
+            if fy < 0 || fy >= H { continue; }
+            for tx in 0..tile {
+                let fx = x + tx;
+                if fx < 0 || fx >= W { continue; }
+                let cov = stamp[(ty * tile + tx) as usize] as u32;
+                if cov == 0 { continue; }
+                let al = (cov * a) >> 8; // 0..255
+                let p = &mut out[(fy * W + fx) as usize];
+                let (dr, dg, db) = (*p & 255, (*p >> 8) & 255, (*p >> 16) & 255);
+                let mixc = |d: u32, s: u32| div255(d * (255 - al) + s * al);
+                *p = 0xff00_0000 | mixc(dr, cr) | (mixc(dg, cg) << 8) | (mixc(db, cb) << 16);
+            }
+        }
+        b = Rect { x0: b.x0.min(x), y0: b.y0.min(y), x1: b.x1.max(x + tile), y1: b.y1.max(y + tile) };
+    }
+    if !b.empty() { mark_rect(s, b.x0 as f32, b.y0 as f32, b.x1 as f32, b.y1 as f32); }
+}
+
+// ------------------------------------------------------------------ images
+
+/// Largest decoded image, in pixels. JPEGs are decoded at a reduced DCT scale first when they
+/// are bigger than needed, so this mostly limits PNG and WebP.
+const MAX_IMAGE_PIXELS: usize = 4 << 20;
+/// Largest side accepted in an image header, before any scaling.
+const MAX_IMAGE_SIDE: usize = 16384;
+
+struct Image {
+    w: usize,
+    h: usize,
+    /// Straight (not premultiplied) RGBA.
+    px: Vec<u8>,
+}
+
+fn decode_image(bytes: &[u8], want_w: u16, want_h: u16) -> Result<Image, i32> {
+    use std::io::Cursor;
+    if bytes.starts_with(&[0xff, 0xd8]) {
+        let mut d = jpeg_decoder::Decoder::new(Cursor::new(bytes));
+        d.set_max_decoding_buffer_size(MAX_IMAGE_PIXELS * 4);
+        d.read_info().map_err(|_| -3)?;
+        let info = d.info().ok_or(-3)?;
+        if info.width as usize > MAX_IMAGE_SIDE || info.height as usize > MAX_IMAGE_SIDE { return Err(-2); }
+        let (w, h) = d.scale(want_w.max(1), want_h.max(1)).map_err(|_| -3)?;
+        let (w, h) = (w as usize, h as usize);
+        if w * h > MAX_IMAGE_PIXELS { return Err(-2); }
+        let data = d.decode().map_err(|_| -3)?;
+        let info = d.info().ok_or(-3)?;
+        let mut px = vec![255u8; w * h * 4];
+        use jpeg_decoder::PixelFormat as F;
+        match info.pixel_format {
+            F::L8 => for i in 0..w * h { px[i * 4..i * 4 + 3].fill(data[i]) },
+            F::L16 => for i in 0..w * h { px[i * 4..i * 4 + 3].fill(data[i * 2]) },
+            F::RGB24 => for i in 0..w * h { px[i * 4..i * 4 + 3].copy_from_slice(&data[i * 3..i * 3 + 3]) },
+            F::CMYK32 => for i in 0..w * h {
+                let k = data[i * 4 + 3] as u32;
+                for ch in 0..3 { px[i * 4 + ch] = div255(data[i * 4 + ch] as u32 * k) as u8; }
+            },
+        }
+        return Ok(Image { w, h, px });
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        let mut d = png::Decoder::new_with_limits(Cursor::new(bytes), png::Limits { bytes: MAX_IMAGE_PIXELS * 8 });
+        d.set_transformations(png::Transformations::normalize_to_color8());
+        let mut r = d.read_info().map_err(|_| -3)?;
+        let (w, h) = (r.info().width as usize, r.info().height as usize);
+        if w > MAX_IMAGE_SIDE || h > MAX_IMAGE_SIDE || w * h > MAX_IMAGE_PIXELS { return Err(-2); }
+        let mut buf = vec![0u8; r.output_buffer_size().ok_or(-2)?];
+        let fi = r.next_frame(&mut buf).map_err(|_| -3)?;
+        let mut px = vec![255u8; w * h * 4];
+        use png::ColorType as C;
+        let stride = fi.line_size;
+        for y in 0..h {
+            let row = &buf[y * stride..];
+            for x in 0..w {
+                let o = (y * w + x) * 4;
+                match fi.color_type {
+                    C::Grayscale => px[o..o + 3].fill(row[x]),
+                    C::GrayscaleAlpha => { px[o..o + 3].fill(row[x * 2]); px[o + 3] = row[x * 2 + 1] }
+                    C::Rgb => px[o..o + 3].copy_from_slice(&row[x * 3..x * 3 + 3]),
+                    _ => px[o..o + 4].copy_from_slice(&row[x * 4..x * 4 + 4]),
+                }
+            }
+        }
+        return Ok(Image { w, h, px });
+    }
+    if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        let mut d = image_webp::WebPDecoder::new(Cursor::new(bytes)).map_err(|_| -3)?;
+        let (w, h) = d.dimensions();
+        let (w, h) = (w as usize, h as usize);
+        if w > MAX_IMAGE_SIDE || h > MAX_IMAGE_SIDE || w * h > MAX_IMAGE_PIXELS { return Err(-2); }
+        let alpha = d.has_alpha();
+        let mut buf = vec![0u8; d.output_buffer_size().ok_or(-2)?];
+        d.read_image(&mut buf).map_err(|_| -3)?;
+        let px = if alpha { buf } else {
+            let mut px = vec![255u8; w * h * 4];
+            for i in 0..w * h { px[i * 4..i * 4 + 3].copy_from_slice(&buf[i * 3..i * 3 + 3]) }
+            px
+        };
+        return Ok(Image { w, h, px });
+    }
+    Err(-1)
+}
+
+/// Decodes a PNG, JPEG or WebP held at `ptr`. `want_w` x `want_h` is the size it will be drawn
+/// at, which lets JPEGs decode at a reduced scale. Returns 0, or -1 (unsupported format),
+/// -2 (too large) or -3 (corrupt). The image is kept until the next decode or `image_free`.
+#[no_mangle]
+pub unsafe extern "C" fn image_decode(ptr: *const u8, len: usize, want_w: u32, want_h: u32) -> i32 {
+    let bytes = std::slice::from_raw_parts(ptr, len);
+    let s = st();
+    s.image = None;
+    match decode_image(bytes, want_w.min(65535) as u16, want_h.min(65535) as u16) {
+        Ok(img) => { s.image = Some(img); 0 }
+        Err(e) => e,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn image_width() -> u32 { st().image.as_ref().map_or(0, |i| i.w as u32) }
+
+#[no_mangle]
+pub extern "C" fn image_height() -> u32 { st().image.as_ref().map_or(0, |i| i.h as u32) }
+
+#[no_mangle]
+pub extern "C" fn image_free() { st().image = None; }
+
+/// Per output pixel along one axis: the first source index and its weights. Shrinking averages
+/// the source span each output pixel covers (area filter); enlarging interpolates linearly.
+fn resample_taps(start: f32, len: f32, n_src: usize, n_out: usize) -> Vec<(usize, Vec<f32>)> {
+    let k = len / n_out as f32;
+    (0..n_out)
+        .map(|o| {
+            if k >= 1.0 {
+                let (a, b) = (start + o as f32 * k, start + (o + 1) as f32 * k);
+                let i0 = (a.floor().max(0.0) as usize).min(n_src - 1);
+                let i1 = (b.ceil().max(1.0) as usize).min(n_src);
+                let ws: Vec<f32> = (i0..i1.max(i0 + 1)).map(|i| ((i + 1) as f32).min(b) - (i as f32).max(a)).map(|w| w.max(0.0) / k).collect();
+                (i0, ws)
+            } else {
+                let c = (start + (o as f32 + 0.5) * k - 0.5).clamp(0.0, (n_src - 1) as f32);
+                let i0 = (c.floor() as usize).min(n_src - 1);
+                let f = c - i0 as f32;
+                if i0 + 1 < n_src { (i0, vec![1.0 - f, f]) } else { (i0, vec![1.0]) }
+            }
+        })
+        .collect()
+}
+
+/// Resamples the crop [cx, cx + cw) x [cy, cy + ch) of the decoded image (source px) into the
+/// whole of sprite `id`, premultiplied.
+#[no_mangle]
+pub extern "C" fn image_to_sprite(id: i32, cx: f32, cy: f32, cw: f32, ch: f32) -> i32 {
+    let s = st();
+    let Some(img) = s.image.as_ref() else { return -1 };
+    let sp = &mut s.sprites[id as usize];
+    let (ow, oh) = (sp.pix.width() as usize, sp.pix.height() as usize);
+    let cols = resample_taps(cx, cw, img.w, ow);
+    let rows = resample_taps(cy, ch, img.h, oh);
+    // Premultiplied float rows, horizontal pass first, only for the source rows in use.
+    let (r0, r1) = (rows.first().map_or(0, |r| r.0), rows.last().map_or(0, |r| r.0 + r.1.len()).min(img.h));
+    let mut hp = vec![0f32; (r1 - r0) * ow * 4];
+    for y in r0..r1 {
+        let src = &img.px[y * img.w * 4..(y + 1) * img.w * 4];
+        let out = &mut hp[(y - r0) * ow * 4..(y - r0 + 1) * ow * 4];
+        for (x, (i0, ws)) in cols.iter().enumerate() {
+            let mut acc = [0f32; 4];
+            for (j, &wt) in ws.iter().enumerate() {
+                let p = &src[(i0 + j) * 4..(i0 + j) * 4 + 4];
+                let a = p[3] as f32 / 255.0 * wt;
+                acc[0] += p[0] as f32 * a;
+                acc[1] += p[1] as f32 * a;
+                acc[2] += p[2] as f32 * a;
+                acc[3] += p[3] as f32 * wt;
+            }
+            out[x * 4..x * 4 + 4].copy_from_slice(&acc);
+        }
+    }
+    let out = sp.pix.data_mut();
+    for (y, (i0, ws)) in rows.iter().enumerate() {
+        for x in 0..ow {
+            let mut acc = [0f32; 4];
+            for (j, &wt) in ws.iter().enumerate() {
+                let r = i0 + j - r0;
+                for ch in 0..4 { acc[ch] += hp[(r * ow + x) * 4 + ch] * wt; }
+            }
+            let a = acc[3].clamp(0.0, 255.0);
+            let o = (y * ow + x) * 4;
+            for ch in 0..3 { out[o + ch] = (acc[ch] + 0.5).clamp(0.0, a + 0.5) as u8; }
+            out[o + 3] = (a + 0.5) as u8;
+        }
+    }
+    0
+}
+
+/// A sprite's premultiplied RGBA pixels, for content drawn in JS (gradients).
+#[no_mangle]
+pub extern "C" fn sprite_ptr(id: i32) -> *mut u8 {
+    st().sprites[id as usize].pix.data_mut().as_mut_ptr()
 }
 
 // ------------------------------------------------------------------ output
@@ -741,3 +1556,13 @@ pub extern "C" fn yuv_ptr() -> *const u8 {
 pub extern "C" fn mb_info_ptr() -> *const u8 {
     st().mb_info.as_ptr()
 }
+
+/// A sprite's frame position and size, for JS that reads its pixels (dot fields, caches).
+#[no_mangle]
+pub extern "C" fn sprite_x(id: i32) -> i32 { st().sprites[id as usize].x }
+#[no_mangle]
+pub extern "C" fn sprite_y(id: i32) -> i32 { st().sprites[id as usize].y }
+#[no_mangle]
+pub extern "C" fn sprite_w(id: i32) -> u32 { st().sprites[id as usize].pix.width() }
+#[no_mangle]
+pub extern "C" fn sprite_h(id: i32) -> u32 { st().sprites[id as usize].pix.height() }
