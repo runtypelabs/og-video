@@ -25,6 +25,7 @@ request ──► Worker
                   2. render the rest live, one fragment per frame:
                        scene timeline (GSAP on plain objects)
                          → Rust/wasm compositor (tiny-skia + SIMD): cached sprites and layers,
+                           transformed draws, masks, blend modes, blur, dot fields, images,
                            converts to I420, flags unchanged 16×16 blocks
                          → x264 (wasm) encodes only what changed
                          → moof/mdat fragment → response
@@ -144,8 +145,11 @@ The [skill](skills/streaming-og-video/SKILL.md) covers the mental model, the ful
 | `metric` | A big number rolls up like an odometer over a trend line that draws itself, with a delta pill | [og.video/v1/metric](https://og.video/v1/metric) |
 | `bars` | A bar chart grows in a staggered wave, values count up, the highlighted bar lands in the accent, and an average line sweeps across | [og.video/v1/bars](https://og.video/v1/bars) |
 | `release` | Release notes: a huge version number rises behind the title, and each item slides in with its icon | [og.video/v1/release](https://og.video/v1/release) |
+| `dot-matrix` | A product card whose blue panel cycles through dot-matrix icons (search, brand, map, monitor, scrape, code, chart), each dissolving in and out dot by dot with a pixel-font label | `sogv render dot-matrix` |
+| `falling-words` | A dot and a label; about a hundred small words rain in at random angles, tumble and pile up (precomputed rigid-body physics), then drop out to loop | `sogv render falling-words` |
+| `gallery` | A title block beside a two-column wall of thumbnails that scrolls without end. Thumbnails are `images` URLs (PNG, JPEG, WebP), or built-in illustrated tiles | `sogv render gallery` |
 
-All six take `accent`, and the newer four also take `theme=light`. `GET /<scenario>.json` lists the resolved params with their defaults.
+All of them take `accent`, and `kinetic`, `metric`, `bars` and `release` also take `theme=light`. The last three are new in v2 and not yet on og.video. `GET /<scenario>.json` lists the resolved params with their defaults.
 
 ## Layout
 
@@ -155,8 +159,9 @@ src/            the library (plain ESM + JSDoc; types in types/)
   schema.js     p.* params schema (Standard Schema compatible)
   params.js     canonical JSON, content ids, packing, signatures
   gfx.js        the Scene/Frame drawing API over the compositor
+  physics.js    a deterministic 2D rigid-body world, for precomputed motion
   text.js       shaping and layout with Chrome's rounding rules (fontkit)
-  engine/       per-isolate engine, x264 glue, fMP4 prefix + tail, PNG
+  engine/       per-isolate engine, x264 glue, fMP4 prefix + tail, PNG, image params
   worker/       createHandler, KV/R2 store, share page
   node/         Node engine and the sogv CLI
   scenarios/    built-in scenarios
@@ -169,18 +174,20 @@ wasm/, fonts/   built artifacts and Inter
 
 - **Safari doesn't stream.** iOS fetches ranges, so the first view on an iPhone waits for a full render (about 0.2–0.6 s at the edge). Later views are cache hits.
 - **Bursts on a cold key.** Many concurrent requests for different new videos in one isolate share one engine. Live tails then skip frames, which looks choppy, and those renders aren't cached. A longer prefix gives more headroom.
-- **Flat graphics only.** The compositor does vector fills, sprites, opacity, blur, clips and layers. It doesn't do footage, 3D or full-frame effects every frame.
+- **2D graphics only.** The compositor does vector fills with solid or gradient paint, sprites with any affine transform, blur, masks, blend modes, shadows, dot fields, decoded images and layers. It doesn't do footage or 3D.
+- **Full-frame motion costs encode time.** A frame where half the picture moves costs about 1–2 ms in x264 alone, so scenes that move a lot every frame (`gallery`, `falling-words`) run at 24 fps to stay near 300 ms per 7 s locally.
+- **Image params are fetched by the Worker.** They are capped in size and count, cached per isolate, and a render missing one is served but never cached. If the image at a URL changes, cached videos keep the old one; change the URL to refresh it.
 
 ## Roadmap
 
 - **A permissively licensed encoder.** Evaluate [minih264](https://github.com/lieff/minih264) (CC0) behind the encoder interface. It needs a per-macroblock skip hint like x264's `mb_info`, and enough speed in wasm.
 - **Compositor:**
-  - movable and transformed sprites (`g.draw(sprite, { transform })` with bilinear sampling);
-  - clips and masks on fills;
   - strokes;
-  - even-odd fills on live paths;
-  - gradient paints;
-  - drawing paths into bitmap sprites.
+  - static and cycling film grain (bitrate-safe: baked or at ≤8 fps);
+  - a blob "mesh" gradient helper;
+  - directional motion blur and perspective (2.5D) card warps.
+- **Footage plates:** H.264 decode in wasm for video backgrounds and pre-rendered 3D loops, behind a container step that normalises uploads (see the v2 plan).
+- **A per-frame cost check in CI:** fail when a scenario's p95 frame cost passes a budget.
 - **Fonts:** a built-in monospace face for code and terminal scenes.
 - **Bundled prefixes:** build prefixes for known keys at deploy time (`sogv prefix build`), so even the first request for a key is instant.
 - **Heavier scenes:** footage, 3D, full-frame effects. These probably belong in a GPU or container tier that renders once into the same R2 cache, while the Worker keeps streaming.

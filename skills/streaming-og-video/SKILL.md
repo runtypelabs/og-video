@@ -25,8 +25,8 @@ Use this skill to:
    - Never use `Math.random()` or `Date`. Seed any randomness from params.
 2. **Rasterize once, compose per frame.**
    - In `setup(ctx, params)`, shape the text and build sprites and paths.
-   - In `draw(g, state)`, only transform, fade, blur or clip them.
-   - Blurring a large sprite every frame is the most expensive thing you can do.
+   - In `draw(g, state)`, only transform, fade, blur, mask or clip them.
+   - Blur is cheap now (about 2 ms for a full frame), but the encoder is not: every frame where half the picture moves costs 1–2 ms in x264. Scenes like that run at 24 fps (`video.fps`) and can raise `video.qp`.
 3. **Unchanged costs nothing.**
    - Frames whose state stringifies the same as the previous frame's are skipped entirely.
    - `g.layer(key, paint)` restores a cached backdrop with one memcpy while `key` is unchanged.
@@ -42,7 +42,11 @@ Use this skill to:
 
 ## Workflow for a new scenario
 
-1. Copy `src/scenarios/title-card.js` (sprites, layers, GSAP) or `diagram.js` (items that bake as they settle) as a starting point. See `references/authoring.md` for the full API.
+1. Copy a built-in scenario as a starting point:
+   - `title-card.js` (sprites, layers, GSAP) or `diagram.js` (items that bake as they settle);
+   - `dot-matrix.js` (halftone dot fields that dissolve);
+   - `falling-words.js` (physics precomputed in setup, rotated sprites, sleepers baked per epoch);
+   - `gallery.js` (image params, whole-pixel scrolling that loops). See `references/authoring.md` for the full API.
 2. Define `params` with `p.object({...})`. Bound every field, since params come from strangers' URLs. Give every field a default so the bare URL looks good.
 3. Iterate with stills: `npx sogv stills path/to/scenario.js#name --params '{"title":"..."}' --at 0.5,2,4,last -o out/x`. Then look at the PNGs.
 4. Render and time it:
