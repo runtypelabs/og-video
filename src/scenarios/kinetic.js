@@ -15,7 +15,7 @@ import { p } from '../schema.js'
 import { rrect, rect } from '../gfx.js'
 import { W, H, THEMES, background, onColor, hex, affine } from './showcase-kit.js'
 
-const PAD_X = 80
+const PAD_X = 96
 const PAD_Y = 64
 const FOOT_H = 64
 const WORDS_AT = 0.6
