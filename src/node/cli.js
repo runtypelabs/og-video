@@ -28,6 +28,7 @@ Options
   --vary '<json>'     Other params to compare against (prefix)
   --origin <url>      Base URL for 'url' (default https://og.video)
   --runs <n>          Iterations for bench (default 5)
+  --av1 <fps>         render, bench: the AV1 variant at that frame rate instead (e.g. 120)
 `
 
 const { values: opts, positionals } = parseArgs({
@@ -40,6 +41,7 @@ const { values: opts, positionals } = parseArgs({
     vary: { type: 'string', default: '[]' },
     origin: { type: 'string', default: 'https://og.video' },
     runs: { type: 'string', default: '5' },
+    av1: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   },
 })
@@ -65,7 +67,17 @@ const params = await parseParams(scenario, JSON.parse(opts.params))
 const engine = await createNodeEngine()
 const now = () => performance.now()
 
-if (command === 'render') {
+const av1Fps = opts.av1 === undefined ? null : Number(opts.av1)
+
+if (command === 'render' && av1Fps) {
+  const out = opts.out ?? `out/${scenario.id}.av1.mp4`
+  await mkdir(resolve(out, '..'), { recursive: true })
+  const t0 = now()
+  const r = await engine.av1(scenario, params, { fps: av1Fps })
+  const t1 = now()
+  await writeFile(out, r.bytes)
+  console.log(`${out}: ${(r.bytes.length / 1024).toFixed(0)} KB, ${r.codec}, ${r.frames} frames at ${r.fps} fps (${r.encoded} encoded) in ${(t1 - t0).toFixed(0)} ms`)
+} else if (command === 'render') {
   const out = opts.out ?? `out/${scenario.id}.mp4`
   await mkdir(resolve(out, '..'), { recursive: true })
   const t0 = now()
@@ -129,11 +141,12 @@ if (command === 'render') {
   const times = []
   for (let i = 0; i < runs; i++) {
     const t0 = now()
-    await engine.file(scenario, params)
+    if (av1Fps) await engine.av1(scenario, params, { fps: av1Fps })
+    else await engine.file(scenario, params)
     times.push(now() - t0)
   }
   times.sort((a, b) => a - b)
-  console.log(`${scenario.id}: median ${times[runs >> 1].toFixed(0)} ms, min ${times[0].toFixed(0)} ms over ${runs} renders (${scenario.video.frames / scenario.video.fps} s of video)`)
+  console.log(`${scenario.id}${av1Fps ? ` (AV1, ${av1Fps} fps)` : ''}: median ${times[runs >> 1].toFixed(0)} ms, min ${times[0].toFixed(0)} ms over ${runs} renders (${scenario.video.frames / scenario.video.fps} s of video)`)
 } else {
   process.stdout.write(HELP)
   process.exit(1)

@@ -38,6 +38,27 @@ export function ogTags(o) {
   ].join('\n')
 }
 
+/**
+ * <source> elements for a video with an AV1 variant: AV1 first, H.264 after. A browser takes the
+ * first type it says it can play, so devices without AV1 decoding (most phones before 2023) fall
+ * through to H.264 with no script. `av1Script` then narrows it further.
+ */
+export function videoSources(o) {
+  if (!o.av1) return ''
+  return `<source src="${esc(o.av1)}" type="${esc(`video/mp4; codecs="${o.av1Codec}"`)}" data-av1><source src="${esc(o.video)}" type="video/mp4">`
+}
+
+/**
+ * Inline script for pages with videoSources(): keeps AV1 only where MediaCapabilities says it
+ * decodes at its frame rate smoothly and power-efficiently (hardware decoding: A17 Pro / M3 and
+ * later on Apple devices), and plays H.264 everywhere else.
+ */
+export function av1Script(o) {
+  if (!o.av1) return ''
+  const config = { type: 'file', video: { contentType: `video/mp4; codecs="${o.av1Codec}"`, width: o.width, height: o.height, bitrate: 2_000_000, framerate: o.av1Fps } }
+  return `<script>(function(){var c=${JSON.stringify(config)};var m=navigator.mediaCapabilities;if(!m||!m.decodingInfo)return;m.decodingInfo(c).then(function(r){if(r.supported&&r.smooth&&r.powerEfficient)return;document.querySelectorAll('source[data-av1]').forEach(function(s){var v=s.parentNode;s.remove();v.load();v.play&&v.play().catch(function(){})})}).catch(function(){})})()</script>`
+}
+
 /** A minimal page: the tags, the video, and nothing else. */
 export function sharePage(o) {
   return `<!doctype html>
@@ -58,8 +79,11 @@ ${ogTags(o)}
 </head>
 <body>
 <main>
-<video src="${esc(o.video)}" poster="${esc(o.image)}" autoplay muted playsinline loop controls></video>
-<p><a href="${esc(o.video)}">MP4</a> · <a href="${esc(o.image)}">Poster</a>${o.footer ? ` · ${o.footer}` : ''}</p>
+${o.av1
+  ? `<video poster="${esc(o.image)}" autoplay muted playsinline loop controls>${videoSources(o)}</video>
+${av1Script(o)}`
+  : `<video src="${esc(o.video)}" poster="${esc(o.image)}" autoplay muted playsinline loop controls></video>`}
+<p><a href="${esc(o.video)}">MP4</a>${o.av1 ? ` · <a href="${esc(o.av1)}">AV1</a>` : ''} · <a href="${esc(o.image)}">Poster</a>${o.footer ? ` · ${o.footer}` : ''}</p>
 </main>
 </body>
 </html>`

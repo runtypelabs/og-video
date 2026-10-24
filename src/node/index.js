@@ -9,9 +9,9 @@ const file = (path) => readFile(new URL(path, root))
 
 /** The engine, loaded from this package's wasm/ and fonts/. */
 export async function createNodeEngine(options = {}) {
-  const [ogfx, x264] = await Promise.all([file('wasm/ogfx.wasm'), file('wasm/x264.wasm')].map(async (b) => WebAssembly.compile(await b)))
+  const [ogfx, x264, aom] = await Promise.all([file('wasm/ogfx.wasm'), file('wasm/x264.wasm'), file('wasm/aom.wasm')].map(async (b) => WebAssembly.compile(await b)))
   return createEngine({
-    modules: { ogfx, x264 },
+    modules: { ogfx, x264, aom },
     fonts: {
       'inter-regular': () => file('fonts/Inter-Regular.ttf.bin'),
       'inter-semibold': () => file('fonts/Inter-SemiBold.ttf.bin'),

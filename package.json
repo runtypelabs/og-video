@@ -22,7 +22,8 @@
     "test": "node --test",
     "dev": "wrangler dev --config examples/worker/wrangler.jsonc",
     "build:ogfx": "sh scripts/build-ogfx.sh",
-    "build:x264": "sh x264/build.sh"
+    "build:x264": "sh x264/build.sh",
+    "build:aom": "sh aom/build.sh"
   },
   "dependencies": {
     "fontkit": "^2.0.4",

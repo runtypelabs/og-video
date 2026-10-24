@@ -133,6 +133,7 @@ Costs at 1200x630 (local wasm SIMD):
 - **Scrolling**: move by whole pixels per frame where you can (`gallery.js`). Whole-pixel motion copies pixels and lets x264 match blocks exactly, which is much cheaper to encode than sub-pixel motion.
 - **Shadows and glows**: make them once with `ctx.shadow` and draw them like any sprite.
 - **Dissolves**: `ctx.dots` + `g.dots` (`dot-matrix.js`). A label in the pixel font can be a dot field too.
+- **Time comes from `ctx.fps` and `ctx.frames`, never constants.** The AV1 variant retimes a scenario to 120 fps (same duration, more frames), so `state(i)` must compute `t = i / ctx.fps`, and precomputed motion must step `1 / ctx.fps` for `ctx.frames` frames. Check with `sogv render <scenario> --av1 120`.
 - **Keep state small.** `state(i)` is stringified every frame, so return only what `draw` reads. GSAP's `_gsap` caches are skipped automatically because keys starting with `_` are ignored.
 - **Under budget?** `sogv bench` should stay well under realtime (7 s at 60 fps in under ~500 ms locally). When most of the frame moves every frame, the encoder dominates: lower `video.fps` (24 or 30) and use a `video.qp` of 23–26 for busy fine detail.
 

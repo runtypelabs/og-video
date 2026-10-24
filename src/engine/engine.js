@@ -10,6 +10,8 @@ import * as fontkit from 'fontkit'
 import { createCompositor, createRun } from '../gfx.js'
 import { createTextEngine } from '../text.js'
 import { createEncoder } from './x264.js'
+import { createAv1Encoder } from './aom.js'
+import { encodeAv1, atFps, AV1_DEFAULTS } from './av1.js'
 import { buildPrefix, streamTail, encodeFrames, codecString } from './encode.js'
 import { encodePng } from './png.js'
 import { createImageLoader } from './images.js'
@@ -23,12 +25,13 @@ export const DEFAULT_FONTS = { regular: 'inter-regular', semibold: 'inter-semibo
 
 /**
  * @param {{
- *   modules: { ogfx: WebAssembly.Module, x264: WebAssembly.Module },
+ *   modules: { ogfx: WebAssembly.Module, x264: WebAssembly.Module, aom?: WebAssembly.Module },
  *   fonts: Record<string, ArrayBuffer | Uint8Array | (() => ArrayBuffer | Uint8Array | Promise<ArrayBuffer | Uint8Array>)>,
  *   tailsAtFullRate?: number,
  *   images?: import('./images.js').ImageLoaderOptions,
  * }} options `fonts` resolves the built-in font names (inter-regular, inter-semibold).
  *   `images` configures fetching image params (fetch, allow, maxBytes, maxImages, cacheBytes).
+ *   `modules.aom` enables `av1()`.
  */
 export function createEngine({ modules, fonts: builtins, tailsAtFullRate = 3, images: imageOptions }) {
   const loader = createImageLoader(imageOptions)
@@ -146,6 +149,17 @@ export function createEngine({ modules, fonts: builtins, tailsAtFullRate = 3, im
         }
         return r.frames
       }, a),
+    /**
+     * The whole video as AV1 in a progressive MP4, at `settings.fps` (default 120). Not streamed:
+     * AV1 encodes several times slower than H.264. The AV1 encoder (about 60 MB of wasm memory)
+     * is instantiated for the render and dropped after it, so an idle isolate stays at the H.264
+     * pair's footprint. Returns { bytes, codec, encoded, frames, fps }.
+     */
+    av1(scenario, params, { assets: a, ...settings } = {}) {
+      if (!modules.aom) throw new Error('AV1 needs modules.aom (wasm/aom.wasm)')
+      const retimed = atFps(scenario, settings.fps ?? AV1_DEFAULTS.fps)
+      return withRun(retimed, params, async (r) => encodeAv1(await createAv1Encoder(modules.aom), r, settings), a)
+    },
     /** Frame count and duration for headers, without rendering. */
     describe: (scenario) => ({ frames: scenario.video.frames, fps: scenario.video.fps, duration: scenario.video.frames / scenario.video.fps }),
     encodeFrames,

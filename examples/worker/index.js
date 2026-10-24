@@ -11,5 +11,7 @@ export default createHandler({
   signatures: 'off',
   writes: 'public',
   rateLimit: 'RENDER_LIMIT',
+  // An AV1 variant at 120 fps (/:scenario.av1.mp4), offered to browsers that decode it in hardware.
+  av1: true,
   siteName: 'streaming-og-video',
 })

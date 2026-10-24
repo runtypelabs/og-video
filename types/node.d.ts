@@ -41,11 +41,13 @@ export interface Engine {
   file(scenario: Scenario, params: any, prefix?: Prefix, opts?: { assets?: Assets }): Promise<Uint8Array>
   poster(scenario: Scenario, params: any, frame?: number, opts?: { assets?: Assets }): Promise<Uint8Array>
   frames(scenario: Scenario, params: any, onFrame: (i: number, rgba: Uint8Array) => void | Promise<void>, opts?: { from?: number; to?: number; assets?: Assets }): Promise<number>
+  /** The whole video as AV1 in a progressive MP4 (not streamed), retimed to `fps` (default 120). Needs modules.aom. */
+  av1(scenario: Scenario, params: any, opts?: { assets?: Assets; fps?: number; speed?: number; cq?: number; screen?: boolean }): Promise<{ bytes: Uint8Array; codec: string; encoded: number; frames: number; fps: number }>
 }
 
 export function createNodeEngine(options?: { tailsAtFullRate?: number; images?: ImageOptions }): Promise<Engine>
 export function createEngine(options: {
-  modules: { ogfx: WebAssembly.Module; x264: WebAssembly.Module }
+  modules: { ogfx: WebAssembly.Module; x264: WebAssembly.Module; aom?: WebAssembly.Module }
   fonts: Record<string, FontSource>
   tailsAtFullRate?: number
   images?: ImageOptions

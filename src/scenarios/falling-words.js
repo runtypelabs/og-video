@@ -58,12 +58,12 @@ export const fallingWords = defineScenario({
 const recorded = new Map()
 
 /**
- * Rains `sizes` (word boxes) into the frame and records every body's pose per frame: x, y, angle
- * in poses[(frame * n + k) * 3 ...], asleep[frame * n + k], and epoch[frame], which changes
- * whenever the set of sleeping bodies does (the baked layer's key).
+ * Rains `sizes` (word boxes) into the frame and records every body's pose in each of `frames`
+ * frames at `fps`: x, y, angle in poses[(frame * n + k) * 3 ...], asleep[frame * n + k], and
+ * epoch[frame], which changes whenever the set of sleeping bodies does (the baked layer's key).
  */
-function simulate(sizes, seed) {
-  const key = `${seed}|${sizes.map(([w, h]) => `${w},${h}`).join(';')}`
+function simulate(sizes, seed, fps, frames) {
+  const key = `${fps}|${frames}|${seed}|${sizes.map(([w, h]) => `${w},${h}`).join(';')}`
   const hit = recorded.get(key)
   if (hit) return hit
   const rnd = prng(`falling-words:${seed}`)
@@ -89,14 +89,14 @@ function simulate(sizes, seed) {
     })
   })
 
-  const poses = new Float32Array(FRAMES * n * 3)
-  const asleep = new Uint8Array(FRAMES * n)
-  const epoch = new Int32Array(FRAMES)
-  const dt = 1 / FPS / SUBSTEPS
+  const poses = new Float32Array(frames * n * 3)
+  const asleep = new Uint8Array(frames * n)
+  const epoch = new Int32Array(frames)
+  const dt = 1 / fps / SUBSTEPS
   let dropped = false
   let e = 0
-  for (let f = 0; f < FRAMES; f++) {
-    const t = f / FPS
+  for (let f = 0; f < frames; f++) {
+    const t = f / fps
     if (t >= RAIN_AT) {
       if (!dropped && t >= DROP_AT) {
         dropped = true
@@ -156,7 +156,7 @@ function setup(ctx, q) {
     const sprite = ctx.sprite([{ cmds: run.cmds(2, 3 + capH), color: ink }], { margin: 2 })
     return { bw, bh, sprite }
   })
-  const sim = simulate(words.map((w) => [w.bw, w.bh]), q.seed)
+  const sim = simulate(words.map((w) => [w.bw, w.bh]), q.seed, ctx.fps, ctx.frames)
   const n = words.length
 
   const transformAt = (f, k) => {
@@ -191,7 +191,7 @@ function setup(ctx, q) {
 
   return {
     state(i) {
-      const t = i / FPS
+      const t = i / ctx.fps
       const dotK = r3(pop(clamp01((t - 0.05) / 0.35)))
       const pillK = r3(clamp01((t - 0.15) / 0.3))
       // Bodies asleep in this frame are baked into a layer (keyed by the sleep epoch); the rest

@@ -3,6 +3,7 @@
 //
 //   GET  /:scenario.mp4?<params>          video (params inline; &sig= when signatures are on)
 //   GET  /:scenario/:id.mp4               video from stored params (content id or name)
+//   GET  /:scenario.av1.mp4?…, /:scenario/:id.av1.mp4   AV1 variant (with the `av1` option)
 //   GET  /:scenario.png?…, /:scenario/:id.png     poster frame (og:image)
 //   GET  /:scenario?…, /:scenario/:id     share page with og:video / og:image tags
 //   GET  /:scenario.json?…, /:scenario/:id.json   resolved params, content id and URLs
@@ -15,14 +16,21 @@
 // the whole file is stored, so the next request anywhere is a cache hit. Renders are
 // deterministic, so a byte range of a fresh render matches the stored file exactly.
 //
+// The AV1 variant is not streamed: it renders whole (several times slower than H.264), then is
+// cached under its own keys. On a miss it redirects to the H.264 video and renders in the
+// background, so nobody waits for it; `Prefer: wait` renders it in the request instead. Link
+// unfurlers asking for it are redirected to H.264 too. The .mp4 URL is always H.264.
+//
 // With `basePath` (e.g. '/v1') every route above lives under it, and links use it.
 // `legacyPaths` keeps serving the unprefixed routes too.
 import ogfxModule from '../../wasm/ogfx.wasm'
 import x264Module from '../../wasm/x264.wasm'
+import aomModule from '../../wasm/aom.wasm'
 import interRegular from '../../fonts/Inter-Regular.ttf.bin'
 import interSemiBold from '../../fonts/Inter-SemiBold.ttf.bin'
 import { createEngine, ENGINE_VERSION, concat } from '../engine/engine.js'
 import { readPrefix } from '../engine/encode.js'
+import { AV1_VERSION, AV1_DEFAULTS, av1Codec } from '../engine/av1.js'
 import { validate, ParamError } from '../schema.js'
 import { rawParams, contentId, verify, sign, hash, canonical, pack } from '../params.js'
 import { sharePage } from './page.js'
@@ -40,8 +48,11 @@ class HttpError extends Error {
 
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-expose-headers': 'content-length, content-range, server-timing, x-sogv-cache, x-sogv-id, x-sogv-duration',
+  'access-control-expose-headers': 'content-length, content-range, server-timing, x-sogv-cache, x-sogv-id, x-sogv-duration, x-sogv-codec, x-sogv-fps, x-sogv-render-ms',
 }
+
+/** Link unfurlers and crawlers: they read og:video (always H.264) and must never get AV1. */
+export const CRAWLER = /bot\b|crawler|spider|facebookexternalhit|facebot|twitterbot|slackbot|slack-imgproxy|discordbot|whatsapp|telegrambot|linkedinbot|skypeuripreview|embedly|redditbot|pinterest|vkshare|iframely|bluesky|mastodon/i
 
 /**
  * @param {import('../../types/worker.js').HandlerOptions} options
@@ -61,12 +72,16 @@ export function createHandler(options) {
   }
   if (o.signatures === 'required' && !o.secret) throw new Error('signatures: "required" needs a secret binding name')
   const basePath = normalizeBase(o.basePath)
+  const av1 = o.av1 ? { ...AV1_DEFAULTS, miss: 'fallback', ...(o.av1 === true ? {} : o.av1) } : null
+  if (av1 && ![24, 25, 30, 48, 50, 60, 90, 120].includes(av1.fps)) throw new Error(`av1.fps must be one of 24, 25, 30, 48, 50, 60, 90, 120`)
+  /** Background AV1 renders in flight in this isolate, by key. */
+  const av1Pending = new Map()
   const R2 = o.bucket
   const prefixes = new Map()
 
   const getEngine = () =>
     (engine ??= createEngine({
-      modules: { ogfx: ogfxModule, x264: x264Module },
+      modules: { ogfx: ogfxModule, x264: x264Module, aom: aomModule },
       fonts: { 'inter-regular': interRegular, 'inter-semibold': interSemiBold, ...o.fonts },
       tailsAtFullRate: o.tailsAtFullRate,
       images: o.images,
@@ -97,6 +112,9 @@ export function createHandler(options) {
   }
 
   const renderKey = (scenario, cid) => `${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${cid}`
+  // AV1 renders live under their own top-level prefix, keyed by every setting that changes bytes.
+  const av1Key = (scenario, cid) =>
+    `av1/${AV1_VERSION}/${av1.fps}-${av1.speed}-${av1.cq}${av1.screen ? 's' : ''}/${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${cid}`
   const cacheUrl = (key, ext) => `https://streaming-og-video.internal/${key}.${ext}`
 
   async function edgeLookup(key, ext) {
@@ -308,6 +326,75 @@ export function createHandler(options) {
     return new Response(readable, { headers })
   }
 
+  /** Renders the AV1 file and stores it with its stats (R2 metadata, edge headers). */
+  async function renderAv1(env, scenario, input, key, a) {
+    a ??= await getEngine().assets(scenario, input.params)
+    const t0 = Date.now()
+    const r = await getEngine().av1(scenario, input.params, { ...av1, assets: a })
+    // Date.now() only advances across I/O in Workers: yield once so it covers the render.
+    await yieldToNetwork()
+    const meta = { codec: r.codec, fps: String(r.fps), encoded: String(r.encoded), renderMs: String(Date.now() - t0) }
+    if (!a.missing.length)
+      await Promise.all([
+        R2 && env[R2].put(`renders/${key}.mp4`, r.bytes, { httpMetadata: { contentType: 'video/mp4' }, customMetadata: meta }),
+        o.edgeCache && caches.default.put(cacheUrl(key, 'mp4'), new Response(r.bytes, { headers: { 'content-type': 'video/mp4', 'cache-control': 'public, max-age=31536000, immutable', ...av1Headers(meta) } })),
+      ]).catch(() => {})
+    return { bytes: r.bytes, meta }
+  }
+
+  const av1Headers = (meta) => ({
+    'x-sogv-codec': meta.codec,
+    'x-sogv-fps': meta.fps,
+    ...(meta.renderMs ? { 'x-sogv-render-ms': meta.renderMs } : {}),
+  })
+
+  async function videoAv1(request, env, ctx, scenario, input, ev) {
+    ev.codec = 'av1'
+    const fallback = () => {
+      const url = new URL(request.url)
+      url.pathname = url.pathname.replace(/\.av1\.mp4$/, '.mp4')
+      return new Response(null, { status: 307, headers: { location: url.toString(), 'cache-control': 'no-store', 'x-sogv-codec': 'h264', ...CORS } })
+    }
+    // Unfurlers never get AV1, whatever URL they were handed.
+    if (CRAWLER.test(request.headers.get('user-agent') ?? '')) {
+      ev.cache = 'crawler'
+      return fallback()
+    }
+    const key = av1Key(scenario, input.cid)
+    const headers = (cache, meta) => mediaHeaders(scenario, 'video/mp4', input, cache, { ...av1Headers(meta), vary: 'prefer' })
+    const edge = o.edgeCache && (await caches.default.match(cacheUrl(key, 'mp4')))
+    if (edge) {
+      ev.cache = 'edge'
+      const meta = { codec: edge.headers.get('x-sogv-codec'), fps: edge.headers.get('x-sogv-fps'), renderMs: edge.headers.get('x-sogv-render-ms') }
+      return sliceResponse(new Uint8Array(await edge.arrayBuffer()), request, headers('edge', meta))
+    }
+    const obj = R2 && (await env[R2].get(`renders/${key}.mp4`))
+    if (obj) {
+      ev.cache = 'r2'
+      const bytes = new Uint8Array(await obj.arrayBuffer())
+      const meta = obj.customMetadata ?? {}
+      if (o.edgeCache)
+        ctx.waitUntil(caches.default.put(cacheUrl(key, 'mp4'), new Response(bytes, { headers: { 'content-type': 'video/mp4', 'cache-control': 'public, max-age=31536000, immutable', ...av1Headers(meta) } })).catch(() => {}))
+      return sliceResponse(bytes, request, headers('r2', meta))
+    }
+    ev.cache = 'miss'
+    const wait = av1.miss === 'render' || /\bwait\b/i.test(request.headers.get('prefer') ?? '')
+    if (!wait) {
+      // Play H.264 now; render AV1 for the next viewer (once per key per isolate).
+      if (!av1Pending.has(key) && !(await limited(request, env))) {
+        const job = renderAv1(env, scenario, input, key).finally(() => av1Pending.delete(key))
+        av1Pending.set(key, job)
+        ctx.waitUntil(job.catch((error) => console.error(error)))
+        ev.av1 = 'started'
+      } else ev.av1 = av1Pending.has(key) ? 'pending' : 'limited'
+      return fallback()
+    }
+    if (await limited(request, env)) throw new HttpError(429, 'too many renders from this address; try again in a minute')
+    const { bytes, meta } = await (av1Pending.get(key) ?? renderAv1(env, scenario, input, key))
+    ev.bytes = bytes.length
+    return sliceResponse(bytes, request, headers('miss', meta))
+  }
+
   async function poster(request, env, ctx, scenario, input, ev) {
     const key = renderKey(scenario, input.cid)
     const hit = await lookup(env, key, 'png')
@@ -325,15 +412,18 @@ export function createHandler(options) {
   async function links(request, env, scenario, input) {
     const origin = new URL(request.url).origin
     const base = `${origin}${basePath}/${scenario.id}`
-    if (input.id) return { page: `${base}/${input.id}`, video: `${base}/${input.id}.mp4`, image: `${base}/${input.id}.png` }
-    const search = new URL(request.url).search
-    return { page: `${base}${search}`, video: `${base}.mp4${search}`, image: `${base}.png${search}` }
+    const at = input.id ? `${base}/${input.id}` : base
+    const search = input.id ? '' : new URL(request.url).search
+    const l = { page: `${at}${search}`, video: `${at}.mp4${search}`, image: `${at}.png${search}` }
+    if (av1) l.av1 = `${at}.av1.mp4${search}`
+    return l
   }
 
   async function page(request, env, ctx, scenario, input) {
     const l = await links(request, env, scenario, input)
     const meta = scenario.meta(input.params) ?? {}
-    const html = (o.page ?? sharePage)({ ...l, ...meta, width: scenario.video.width, height: scenario.video.height, siteName: o.siteName, scenario, params: input.params })
+    const v = scenario.video
+    const html = (o.page ?? sharePage)({ ...l, ...meta, width: v.width, height: v.height, ...(av1 && { av1Codec: av1Codec(v.width, v.height, av1.fps), av1Fps: av1.fps, fps: v.fps }), siteName: o.siteName, scenario, params: input.params })
     return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': o.cacheControl, ...CORS } })
   }
 
@@ -387,7 +477,7 @@ export function createHandler(options) {
 
   // ---------------------------------------------------------------- routing
 
-  const ROUTE = /^\/([a-z0-9][a-z0-9-]*)(?:\/([A-Za-z0-9_-][A-Za-z0-9._-]*?))?(?:\.(mp4|png|json))?$/
+  const ROUTE = /^\/([a-z0-9][a-z0-9-]*)(?:\/([A-Za-z0-9_-][A-Za-z0-9._-]*?))?(?:\.(av1\.mp4|mp4|png|json))?$/
 
   async function fetch(request, env, ctx) {
     const url = new URL(request.url)
@@ -407,7 +497,8 @@ export function createHandler(options) {
     const scenario = m && scenarios.get(m[1])
     if (!scenario) return o.notFound ? o.notFound(request, env, ctx) : json({ error: 'not found' }, 404)
     const [, , id, ext] = m
-    const ev = { type: ext === 'mp4' ? 'video' : ext === 'png' ? 'poster' : ext === 'json' ? 'json' : 'page', scenario: scenario.id, method, status: 200, start: Date.now(), range: request.headers.has('range') }
+    if (ext === 'av1.mp4' && !av1) return o.notFound ? o.notFound(request, env, ctx) : json({ error: 'not found' }, 404)
+    const ev = { type: ext === 'mp4' || ext === 'av1.mp4' ? 'video' : ext === 'png' ? 'poster' : ext === 'json' ? 'json' : 'page', scenario: scenario.id, method, status: 200, start: Date.now(), range: request.headers.has('range') }
     try {
       let res
       if (method === 'POST' && !id && !ext) {
@@ -421,6 +512,7 @@ export function createHandler(options) {
         ev.source = input.source
         ev.cid = input.cid
         if (ext === 'mp4') res = await video(request, env, ctx, scenario, input, ev)
+        else if (ext === 'av1.mp4') res = await videoAv1(request, env, ctx, scenario, input, ev)
         else if (ext === 'png') res = await poster(request, env, ctx, scenario, input, ev)
         else if (ext === 'json') {
           const secret = o.signatures === 'required' ? secretOf(env) : null
@@ -454,7 +546,8 @@ export function createHandler(options) {
 /**
  * The URL of a scenario's video for `params`: plain query parameters when they are short and
  * flat, the packed `s=` form otherwise, signed when a secret is given.
- * @returns {Promise<{ video: string, image: string, page: string }>}
+ * `av1` is the AV1 variant's URL (served when the handler has the `av1` option).
+ * @returns {Promise<{ video: string, image: string, page: string, av1: string }>}
  */
 export async function videoUrl(origin, scenario, params, { secret, basePath } = {}) {
   const valid = await validate(scenario.params, params)
@@ -467,7 +560,7 @@ export async function videoUrl(origin, scenario, params, { secret, basePath } = 
   }
   if (secret) q.set('sig', await sign(secret, scenario.id, valid))
   const base = `${origin.replace(/\/$/, '')}${normalizeBase(basePath)}/${scenario.id}`
-  return { video: `${base}.mp4?${q}`, image: `${base}.png?${q}`, page: `${base}?${q}` }
+  return { video: `${base}.mp4?${q}`, image: `${base}.png?${q}`, page: `${base}?${q}`, av1: `${base}.av1.mp4?${q}` }
 }
 
 /** '' or '/segment[/segment]' with no trailing slash. */

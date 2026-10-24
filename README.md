@@ -72,10 +72,22 @@ export default createHandler({
 | `GET /<scenario>.json?<params>` | Resolved params, content id, links, and a packed `?s=` URL |
 | `POST /<scenario>` (JSON body) | Stores params and returns `/<scenario>/<id>.mp4` (the id is a content hash) |
 | `PUT /<scenario>/<name>` | Stores params under a name (needs the bearer token) |
+| `GET /<scenario>.av1.mp4?<params>` | The AV1 variant, with `av1: true` (see below) |
 
 Routes can live under a version prefix: `createHandler({ basePath: '/v1' })` serves `/v1/<scenario>.mp4` and uses the prefix in every link it returns (`videoUrl(..., { basePath })` does the same). Add `legacyPaths: true` to keep serving the unprefixed routes too. og.video uses `/v1`.
 
 Params are query strings. Arrays and objects go as JSON, or as `?s=`: canonical JSON, deflated and base64url-encoded, about 3× shorter. Query keys the scenario doesn't declare, such as `utm_source`, are ignored and don't affect the cache key.
+
+### AV1 at 120 fps
+
+`createHandler({ av1: true })` adds an AV1 variant of every video at `/<scenario>.av1.mp4` (and `/<scenario>/<id>.av1.mp4`): 120 fps by default, encoded with libaom's realtime mode in wasm, in a plain progressive MP4. It is about a third to a fifth of the H.264 size.
+
+- **Not streamed.** AV1 in wasm encodes 2–7× slower than x264 ultrafast (about 1–3 s locally per 7 s card at 120 fps, 7–8 s for `gallery`), so it can't run ahead of playback. It renders whole, once, and is cached under its own keys (`av1/<version>/<settings>/...`).
+- **Never waited for.** On a miss it answers `307` to the H.264 video and renders AV1 in the background, so the next viewer gets it. `Prefer: wait` renders it in the request instead (for tools and tests), and `av1: { miss: 'render' }` makes that the default.
+- **Never sent to unfurlers.** `og:video` and the `.mp4` URL are always H.264. A link-preview crawler (`CRAWLER`) that asks for `.av1.mp4` anyway is redirected to H.264.
+- **Picked by the browser.** The share page lists AV1 first and H.264 second as `<source>` elements, and a short script keeps AV1 only when `navigator.mediaCapabilities.decodingInfo` reports 120 fps decoding as smooth and power-efficient (hardware AV1: iPhone 15 Pro and later, M3 Macs and later, recent GPUs). `videoSources()` and `av1Script()` give your own pages the same markup.
+
+The server never guesses from the user agent: Safari's user agent doesn't name the device and Safari sends no model client hint, and an iMessage preview is fetched by the sender's device but played on the recipient's. Settings: `av1: { fps, speed, cq, screen, miss }`.
 
 ### Cloudflare primitives
 
@@ -163,12 +175,13 @@ src/            the library (plain ESM + JSDoc; types in types/)
   gfx.js        the Scene/Frame drawing API over the compositor
   physics.js    a deterministic 2D rigid-body world, for precomputed motion
   text.js       shaping and layout with Chrome's rounding rules (fontkit)
-  engine/       per-isolate engine, x264 glue, fMP4 prefix + tail, PNG, image params
+  engine/       per-isolate engine, x264 and libaom glue, fMP4 prefix + tail, AV1 MP4, PNG, image params
   worker/       createHandler, KV/R2 store, share page
   node/         Node engine and the sogv CLI
   scenarios/    built-in scenarios
 crates/ogfx/    the Rust compositor (npm run build:ogfx)
 x264/           x264 wasm build (npm run build:x264)
+aom/            libaom (AV1) wasm build (npm run build:aom)
 wasm/, fonts/   built artifacts and Inter
 ```
 
@@ -178,6 +191,7 @@ wasm/, fonts/   built artifacts and Inter
 - **Bursts on a cold key.** Many concurrent requests for different new videos in one isolate share one engine. Live tails then skip frames, which looks choppy, and those renders aren't cached. A longer prefix gives more headroom.
 - **2D graphics only.** The compositor does vector fills with solid or gradient paint, sprites with any affine transform, blur, masks, blend modes, shadows, dot fields, decoded images and layers. It doesn't do footage or 3D.
 - **Full-frame motion costs encode time.** A frame where half the picture moves costs about 1–2 ms in x264 alone, so scenes that move a lot every frame (`gallery`, `falling-words`) take 0.6–0.8 s per 7 s at 60 fps locally, and `falling-words` is about 5 MB. Lower `video.fps` for scenes like that if size or render time matters more than smoothness.
+- **An AV1 miss holds the isolate's engine.** The background AV1 render (seconds, not milliseconds) runs on the same compositor queue as H.264 renders, so a new H.264 video in that isolate starts its tail after it. Its encoder adds about 60 MB of wasm memory while it runs and is dropped after.
 - **Image params are fetched by the Worker.** They are capped in size and count, cached per isolate, and a render missing one is served but never cached. If the image at a URL changes, cached videos keep the old one; change the URL to refresh it.
 
 ## Roadmap
@@ -196,4 +210,4 @@ wasm/, fonts/   built artifacts and Inter
 
 ## License
 
-MIT, except `wasm/x264.wasm`, which is GPL-2.0-or-later. That matters if you redistribute builds that include it; see [NOTICE.md](NOTICE.md). Inter is OFL-1.1 and Twemoji outlines are CC-BY 4.0.
+MIT, except `wasm/x264.wasm`, which is GPL-2.0-or-later, and `wasm/aom.wasm` (libaom), which is BSD-2-Clause with the AOM patent license. That matters if you redistribute builds that include it; see [NOTICE.md](NOTICE.md). Inter is OFL-1.1 and Twemoji outlines are CC-BY 4.0.

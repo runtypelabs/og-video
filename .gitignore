@@ -7,3 +7,6 @@ x264/bin/
 *.log
 .DS_Store
 .verify/
+aom/src/
+aom/bin/
+aom/build/

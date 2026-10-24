@@ -6,6 +6,7 @@ which keep their own licenses.
 | Component | Where | License |
 |---|---|---|
 | **x264** (H.264 encoder) | `wasm/x264.wasm`, built from `x264/` | **GPL-2.0-or-later**: see `x264/COPYING`. `x264/wrapper.c` is part of that build and is distributed under the same license. |
+| **libaom** (AV1 encoder) | `wasm/aom.wasm`, built from `aom/` | BSD-2-Clause, plus the Alliance for Open Media Patent License 1.0: see `aom/LICENSE` and `aom/PATENTS`. `aom/wrapper.c` and `aom/shim/` are MIT. |
 | Inter (typeface) | `fonts/Inter-*.ttf.bin` | SIL Open Font License 1.1: see `fonts/OFL.txt` |
 | Twemoji graphics | `src/scenarios/twemoji.json` (converted outlines) | CC-BY 4.0, Copyright Twitter, Inc and other contributors: https://github.com/jdecked/twemoji |
 | tiny-skia | compiled into `wasm/ogfx.wasm` | BSD-3-Clause |

@@ -4,7 +4,7 @@
 const ENOSYS = 52
 const EBADF = 8
 
-function wasiStubs(getMemory) {
+export function wasiStubs(getMemory) {
   return {
     // stdout/stderr writes are swallowed but reported as fully written.
     fd_write(fd, iovs, iovsLen, nwritten) {
