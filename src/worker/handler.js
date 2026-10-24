@@ -252,8 +252,11 @@ export function createHandler(options) {
     writer.write(prefix.bytes)
     let degraded = false
     ev.queued = eng.queued + 1
-    const done = eng
-      .tail(scenario, input.params, prefix, {
+    // Yield once first: the tail's setup (instantiating the engine, parsing fonts, rasterizing) is
+    // synchronous CPU, and the runtime only flushes the headers and the prefix when it gets the
+    // event loop back.
+    const done = yieldToNetwork()
+      .then(() => eng.tail(scenario, input.params, prefix, {
         write: (b) => {
           parts.push(b)
           writer.write(b)
@@ -264,7 +267,7 @@ export function createHandler(options) {
           return step
         },
         yieldToNetwork,
-      })
+      }))
       .then(async (r) => {
         await writer.close()
         ev.frames = r.encoded
