@@ -27,7 +27,7 @@ export const kinetic = defineScenario({
   params: p.object({
     text: p.string({ max: 120, min: 1, default: 'Every link deserves a *moving picture*' }),
     by: p.string({ max: 40, default: '' }),
-    accent: p.color({ default: '#ff5b29' }),
+    accent: p.color({ default: '#06b6d4' }),
     theme: p.enum(['dark', 'light'], { default: 'dark' }),
   }),
   prefix: { frames: 18, key: (q) => `${q.accent}|${q.theme}` },
