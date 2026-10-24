@@ -35,7 +35,7 @@ request ──► Worker
 ```
 
 - **Starts instantly.** A scenario declares how many opening frames depend only on a few params (its *prefix*). Those frames are encoded once per prefix key, kept in R2 and isolate memory, and written before any rendering. Players start on the prefix while the rest renders.
-- **Faster than realtime.** A 7 s, 1200×630 card renders in about 100–200 ms on a laptop and well under its playing time at the edge. The compositor rasterizes shapes once; frames whose state hasn't changed are skipped; blocks nothing touched are skipped by the encoder.
+- **Faster than realtime.** A 7 s, 1200×630, 60 fps card renders in about 200–500 ms on a laptop and well under its playing time at the edge. The compositor rasterizes shapes once; frames whose state hasn't changed are skipped; blocks nothing touched are skipped by the encoder.
 - **Renders once.** The cache key is the params' content hash, the scenario version and the engine version. A render that skipped frames under load is never stored, so the cached copy is always complete.
 - **Plays on iPhones.** Byte ranges are served from the cached file, or from a full render that is byte-identical to it, which is what iOS Safari needs.
 - **Bounded.** One compositor + encoder per isolate (about 38 MB of the 128 MB limit), renders queued FIFO, and frame skipping by queue depth under bursts, because Workers have no clock to measure lag with.
@@ -177,7 +177,7 @@ wasm/, fonts/   built artifacts and Inter
 - **Safari doesn't stream.** iOS fetches ranges, so the first view on an iPhone waits for a full render (about 0.2–0.6 s at the edge). Later views are cache hits.
 - **Bursts on a cold key.** Many concurrent requests for different new videos in one isolate share one engine. Live tails then skip frames, which looks choppy, and those renders aren't cached. A longer prefix gives more headroom.
 - **2D graphics only.** The compositor does vector fills with solid or gradient paint, sprites with any affine transform, blur, masks, blend modes, shadows, dot fields, decoded images and layers. It doesn't do footage or 3D.
-- **Full-frame motion costs encode time.** A frame where half the picture moves costs about 1–2 ms in x264 alone, so scenes that move a lot every frame (`gallery`, `falling-words`) run at 24 fps to stay near 300 ms per 7 s locally.
+- **Full-frame motion costs encode time.** A frame where half the picture moves costs about 1–2 ms in x264 alone, so scenes that move a lot every frame (`gallery`, `falling-words`) take 0.6–0.8 s per 7 s at 60 fps locally, and `falling-words` is about 5 MB. Lower `video.fps` for scenes like that if size or render time matters more than smoothness.
 - **Image params are fetched by the Worker.** They are capped in size and count, cached per isolate, and a render missing one is served but never cached. If the image at a URL changes, cached videos keep the old one; change the URL to refresh it.
 
 ## Roadmap

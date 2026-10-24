@@ -16,7 +16,7 @@ import { createImageLoader } from './images.js'
 import { imageUrls } from '../schema.js'
 
 /** Bump whenever the bytes a render produces change: cache keys include it. */
-export const ENGINE_VERSION = '2'
+export const ENGINE_VERSION = '3'
 
 /** Fonts every scenario gets unless it overrides the name. */
 export const DEFAULT_FONTS = { regular: 'inter-regular', semibold: 'inter-semibold' }

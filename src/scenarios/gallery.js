@@ -2,12 +2,12 @@
 // up without end. Thumbnails are image params (PNG, JPEG or WebP URLs, fetched and decoded into
 // rounded sprites); without any, it shows built-in illustrated tiles, a few of them animated.
 //
-// The wall moves exactly 5 px per frame and a column repeats every 840 px (4 tiles), so the 7 s
+// The wall moves exactly 2 px per frame and a column repeats every 840 px (4 tiles), so the 7 s
 // video loops seamlessly. Whole-pixel motion keeps the sprites unresampled (plain copies) and lets
 // the encoder match every block exactly one step down, which is far cheaper than sub-pixel motion.
-// Half the frame changes on every frame, so encoding dominates the cost: it runs at 24 fps.
+// Half the frame changes on every frame, so encoding dominates the cost.
 //
-// The first 8 frames (before the text fades in) depend only on the images and the accent.
+// The first 20 frames (before the text fades in) depend only on the images and the accent.
 import { defineScenario } from '../scenario.js'
 import { p } from '../schema.js'
 import { rrect, rect, ellipse } from '../gfx.js'
@@ -20,14 +20,14 @@ const TILE_H = 196
 const GAP = 14
 const PER_COL = 4
 const PERIOD = PER_COL * (TILE_H + GAP) // 840 px
-const STEP = 5 // px per frame: 168 frames x 5 = 840
+const STEP = 2 // px per frame: 420 frames x 2 = 840
 const COL_X = [W - 40 - 2 * TILE_W - GAP, W - 40 - TILE_W]
 const RADIUS = 14
 
 export const gallery = defineScenario({
   id: 'gallery',
   version: 1,
-  video: { width: W, height: H, fps: 24, frames: 168 },
+  video: { width: W, height: H, fps: 60, frames: 420 },
   params: p.object({
     title: p.string({ max: 40, default: 'Playground' }),
     description: p.string({ max: 140, default: 'A collection of interactive experiments, demos and creative projects.' }),
@@ -35,7 +35,7 @@ export const gallery = defineScenario({
     accent: p.color({ default: '#2f6bff' }),
     images: p.array(p.image(), { max: 8, default: [] }),
   }),
-  prefix: { frames: 8, key: (q) => `${q.accent}|${q.images.join(' ')}` },
+  prefix: { frames: 20, key: (q) => `${q.accent}|${q.images.join(' ')}` },
   meta: (q) => ({ title: q.title, description: q.description || undefined }),
   setup,
 })

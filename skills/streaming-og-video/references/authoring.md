@@ -134,7 +134,7 @@ Costs at 1200x630 (local wasm SIMD):
 - **Shadows and glows**: make them once with `ctx.shadow` and draw them like any sprite.
 - **Dissolves**: `ctx.dots` + `g.dots` (`dot-matrix.js`). A label in the pixel font can be a dot field too.
 - **Keep state small.** `state(i)` is stringified every frame, so return only what `draw` reads. GSAP's `_gsap` caches are skipped automatically because keys starting with `_` are ignored.
-- **Under budget?** `sogv bench` should stay well under realtime (7 s of video in under ~300 ms locally). When most of the frame moves every frame, the encoder dominates: use `video: { fps: 24 }` and a `video.qp` of 23–26 for busy fine detail.
+- **Under budget?** `sogv bench` should stay well under realtime (7 s at 60 fps in under ~500 ms locally). When most of the frame moves every frame, the encoder dominates: lower `video.fps` (24 or 30) and use a `video.qp` of 23–26 for busy fine detail.
 
 ## GSAP gotchas
 

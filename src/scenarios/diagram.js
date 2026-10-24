@@ -6,7 +6,7 @@
 // paint group has too) it is baked into a cached layer; only the rest are redrawn per frame, and
 // only the macroblocks they touch are re-checked for the encoder.
 //
-// The first 11 frames (until the lanes start to unfold) depend only on brand and accent.
+// The first 22 frames (until the lanes start to unfold) depend only on brand and accent.
 import { gsap } from 'gsap'
 import { defineScenario } from '../scenario.js'
 import { p } from '../schema.js'
@@ -37,7 +37,7 @@ export const DEFAULT_LANES = [
 export const diagram = defineScenario({
   id: 'diagram',
   version: 1,
-  video: { width: W, height: H, fps: 30, frames: 210 },
+  video: { width: W, height: H, fps: 60, frames: 420 },
   params: p.object({
     title: p.string({ max: 80, default: 'A support agent that answers in Slack and email' }),
     tagline: p.string({ max: 120, default: '' }),
@@ -50,7 +50,7 @@ export const diagram = defineScenario({
     // [from, to] pairs of node ids (or labels). Default: each node to its neighbour in the lane before.
     edges: p.array(p.array(p.string({ max: 40 }), { min: 2, max: 2 }), { max: 16, optional: true }),
   }),
-  prefix: { frames: 11, key: (q) => `${q.brand.toUpperCase()}|${q.accent}` },
+  prefix: { frames: 22, key: (q) => `${q.brand.toUpperCase()}|${q.accent}` },
   meta: (q) => ({ title: q.title, description: q.tagline || undefined }),
   setup,
 })

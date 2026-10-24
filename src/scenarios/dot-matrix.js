@@ -3,7 +3,7 @@
 // give brighter dots), and dissolves in and out dot by dot, sweeping left to right with some
 // noise. Its label is pixel-font dots that dissolve with it. The left half is a static headline.
 //
-// The first 12 frames (0.4 s, the panel sliding in) depend only on the accent, so they are one
+// The first 24 frames (0.4 s, the panel sliding in) depend only on the accent, so they are one
 // prefix per accent. While an icon holds, frames are identical and skipped; a dissolve touches
 // only the panel, so each frame costs a few hundred microseconds.
 import { defineScenario } from '../scenario.js'
@@ -35,7 +35,7 @@ const LABELS = { search: 'search', brand: 'logos', map: 'sitemap', monitor: 'mon
 export const dotMatrix = defineScenario({
   id: 'dot-matrix',
   version: 1,
-  video: { width: W, height: H, fps: 30, frames: 210 },
+  video: { width: W, height: H, fps: 60, frames: 420 },
   params: p.object({
     title: p.string({ max: 90, default: 'Search, map and monitor the web from one API.' }),
     brand: p.string({ max: 32, default: 'Acme' }),
@@ -53,7 +53,7 @@ export const dotMatrix = defineScenario({
       },
     ),
   }),
-  prefix: { frames: 12, key: (q) => q.accent },
+  prefix: { frames: 24, key: (q) => q.accent },
   meta: (q) => ({ title: q.title, description: q.url || undefined }),
   setup,
 })

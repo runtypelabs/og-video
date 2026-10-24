@@ -3,7 +3,7 @@
 // *asterisks* land in the accent colour and then get a highlight block that wipes in behind them,
 // flipping the type. The attribution settles last.
 //
-// The first 18 frames (0.6 s, the accent line) depend only on accent and theme, so they are one
+// The first 36 frames (0.6 s, the accent line) depend only on accent and theme, so they are one
 // prefix per accent/theme pair.
 //
 // Moving words are vector fills with a transform (sprites cannot move); a word is "masked" by
@@ -23,14 +23,14 @@ const WORDS_AT = 0.6
 export const kinetic = defineScenario({
   id: 'kinetic',
   version: 1,
-  video: { width: W, height: H, fps: 30, frames: 210 },
+  video: { width: W, height: H, fps: 60, frames: 420 },
   params: p.object({
     text: p.string({ max: 120, min: 1, default: 'Every link deserves a *moving picture*' }),
     by: p.string({ max: 40, default: '' }),
     accent: p.color({ default: '#ff5b29' }),
     theme: p.enum(['dark', 'light'], { default: 'dark' }),
   }),
-  prefix: { frames: 18, key: (q) => `${q.accent}|${q.theme}` },
+  prefix: { frames: 36, key: (q) => `${q.accent}|${q.theme}` },
   meta: (q) => ({ title: q.text.replace(/\*/g, ''), description: q.by || undefined }),
   setup,
 })

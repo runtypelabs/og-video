@@ -2,7 +2,7 @@
 // bars grow in a staggered wave with their values counting up as they ride the bar tops, the
 // highlighted bar lands in the accent colour, and a dashed average line sweeps across last.
 //
-// The first 15 frames (0.5 s, the gridlines) depend only on accent and theme.
+// The first 30 frames (0.5 s, the gridlines) depend only on accent and theme.
 //
 // Growing bars are two live fills (a body rect scaled vertically and a rounded cap moved to the
 // top), so the rounded corners never squash. Counting labels are assembled from tabular-figure
@@ -23,7 +23,7 @@ const BARS_AT = 0.5
 export const bars = defineScenario({
   id: 'bars',
   version: 1,
-  video: { width: W, height: H, fps: 30, frames: 210 },
+  video: { width: W, height: H, fps: 60, frames: 420 },
   params: p.object({
     title: p.string({ max: 60, default: 'Renders by region, this week' }),
     data: p.array(p.number({ min: 0, max: 1e9 }), { min: 1, max: 12, default: [18240, 42610, 31420, 27930, 12310, 15840, 9620, 6110] }),
@@ -34,7 +34,7 @@ export const bars = defineScenario({
     accent: p.color({ default: '#3b82f6' }),
     theme: p.enum(['dark', 'light'], { default: 'dark' }),
   }),
-  prefix: { frames: 15, key: (q) => `${q.accent}|${q.theme}` },
+  prefix: { frames: 30, key: (q) => `${q.accent}|${q.theme}` },
   meta: (q) => ({ title: q.title || 'Bar chart' }),
   setup,
 })
