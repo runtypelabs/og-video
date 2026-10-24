@@ -2,7 +2,7 @@
 // up like an odometer (each digit slot spins into place, left to right), the trend line draws
 // across the bottom with a glowing head, and a delta pill pops in beside the number.
 //
-// The first 18 frames (0.6 s: gridlines and label) depend only on accent, theme and label, so a
+// The first 36 frames (0.6 s: gridlines and label) depend only on accent, theme and label, so a
 // metric that is re-rendered daily with a new value reuses its prefix.
 //
 // Rolling digits are vector fills moving under a mask: the background bitmap is redrawn clipped
@@ -24,7 +24,7 @@ const ROLL_AT = 0.6
 export const metric = defineScenario({
   id: 'metric',
   version: 1,
-  video: { width: W, height: H, fps: 30, frames: 210 },
+  video: { width: W, height: H, fps: 60, frames: 420 },
   params: p.object({
     label: p.string({ max: 48, default: 'Videos rendered this month' }),
     value: p.number({ min: 0, max: 999999999, default: 48210 }),
@@ -36,7 +36,7 @@ export const metric = defineScenario({
     accent: p.color({ default: '#22c55e' }),
     theme: p.enum(['dark', 'light'], { default: 'dark' }),
   }),
-  prefix: { frames: 18, key: (q) => `${q.accent}|${q.theme}|${q.label}` },
+  prefix: { frames: 36, key: (q) => `${q.accent}|${q.theme}|${q.label}` },
   meta: (q) => ({ title: `${q.label}: ${format(q)}`, description: q.delta || undefined }),
   setup,
 })

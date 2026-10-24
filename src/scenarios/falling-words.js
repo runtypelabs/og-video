@@ -9,9 +9,9 @@
 // moving ones are drawn live, so a settled pile costs nothing per frame.
 //
 // Dense motion of fine detail is what costs here (encoding ~100 frames of small rotating type),
-// so it runs at 24 fps and qp 23.
+// so it runs at qp 23.
 //
-// The first 12 frames (0.5 s: the dot and label popping in) depend only on the label and the
+// The first 30 frames (0.5 s: the dot and label popping in) depend only on the label and the
 // accent, so they are one prefix per label/accent pair.
 import { defineScenario } from '../scenario.js'
 import { p } from '../schema.js'
@@ -21,11 +21,11 @@ import { prng } from './showcase-kit.js'
 
 const W = 1200
 const H = 630
-const FPS = 24
-const FRAMES = 168
+const FPS = 60
+const FRAMES = 420
 const RAIN_AT = 0.5
 const DROP_AT = 6.3
-const SUBSTEPS = 5
+const SUBSTEPS = 2 // 1/120 s physics steps
 const FONT = 17
 
 const WORDS = [
@@ -46,7 +46,7 @@ export const fallingWords = defineScenario({
     accent: p.color({ default: '#ff4a1c' }),
     seed: p.int({ min: 0, max: 9999, default: 1 }),
   }),
-  prefix: { frames: 12, key: (q) => `${q.label}|${q.accent}` },
+  prefix: { frames: 30, key: (q) => `${q.label}|${q.accent}` },
   poster: Math.round(5.6 * FPS),
   meta: (q) => ({ title: q.label, description: q.words.slice(0, 6).join(', ') }),
   setup,

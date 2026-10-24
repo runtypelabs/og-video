@@ -26,7 +26,7 @@ Use this skill to:
 2. **Rasterize once, compose per frame.**
    - In `setup(ctx, params)`, shape the text and build sprites and paths.
    - In `draw(g, state)`, only transform, fade, blur, mask or clip them.
-   - Blur is cheap now (about 2 ms for a full frame), but the encoder is not: every frame where half the picture moves costs 1–2 ms in x264. Scenes like that run at 24 fps (`video.fps`) and can raise `video.qp`.
+   - Blur is cheap now (about 2 ms for a full frame), but the encoder is not: every frame where half the picture moves costs 1–2 ms in x264. For scenes like that, lower `video.fps` (the built-ins run at 60) or raise `video.qp`.
 3. **Unchanged costs nothing.**
    - Frames whose state stringifies the same as the previous frame's are skipped entirely.
    - `g.layer(key, paint)` restores a cached backdrop with one memcpy while `key` is unchanged.

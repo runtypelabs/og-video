@@ -2,7 +2,7 @@
 // as a pixel wordmark, the stage flips the wordmark into the header, then the kicker types on and
 // the title words blur in.
 //
-// The first 84 frames (2.8 s, until the badge appears) depend only on the brand and accent, so
+// The first 168 frames (2.8 s, until the badge appears) depend only on the brand and accent, so
 // they are one prefix per brand/accent pair and play instantly while the rest renders.
 import { gsap } from 'gsap'
 import { defineScenario } from '../scenario.js'
@@ -23,7 +23,7 @@ const SCAN_START = 0.35
 export const titleCard = defineScenario({
   id: 'title-card',
   version: 1,
-  video: { width: W, height: H, fps: 30, frames: 210 },
+  video: { width: W, height: H, fps: 60, frames: 420 },
   params: p.object({
     title: p.string({ max: 140, default: 'Animated link previews, rendered at the edge' }),
     kicker: p.string({ max: 32, default: '' }),
@@ -33,7 +33,7 @@ export const titleCard = defineScenario({
     footer: p.string({ max: 48, default: '' }),
     url: p.string({ max: 48, default: '' }),
   }),
-  prefix: { frames: 84, key: (q) => `${q.brand.toUpperCase()}|${q.accent}` },
+  prefix: { frames: 168, key: (q) => `${q.brand.toUpperCase()}|${q.accent}` },
   meta: (q) => ({ title: q.title, description: [q.kicker, q.footer, q.url].filter(Boolean).join(' · ') || undefined }),
   setup,
 })

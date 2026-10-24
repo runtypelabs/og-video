@@ -1,7 +1,7 @@
 // release: a changelog card. A huge version numeral rises from the bottom edge, the version pill
 // and title land, then each item slides in with its icon tile popping on a steady beat.
 //
-// The first 21 frames (0.7 s, the numeral rising) depend only on version, accent and theme.
+// The first 42 frames (0.7 s, the numeral rising) depend only on version, accent and theme.
 //
 // Moving pieces (numeral, tiles, icons, item text) are live vector fills with a transform;
 // everything that has landed is a sprite in a cached layer.
@@ -19,7 +19,7 @@ const DEFAULT_ICONS = ['sparkles', 'bolt', 'globe', 'package', 'chart']
 export const release = defineScenario({
   id: 'release',
   version: 1,
-  video: { width: W, height: H, fps: 30, frames: 210 },
+  video: { width: W, height: H, fps: 60, frames: 420 },
   params: p.object({
     title: p.string({ max: 48, default: "What's new this week" }),
     version: p.string({ max: 8, default: '2.4', pattern: /^[A-Za-z0-9.\-]*$/ }),
@@ -33,7 +33,7 @@ export const release = defineScenario({
     accent: p.color({ default: '#a855f7' }),
     theme: p.enum(['dark', 'light'], { default: 'dark' }),
   }),
-  prefix: { frames: 21, key: (q) => `${q.accent}|${q.theme}|${q.version}` },
+  prefix: { frames: 42, key: (q) => `${q.accent}|${q.theme}|${q.version}` },
   meta: (q) => ({ title: q.version ? `${q.title} (v${q.version.replace(/^v/i, '')})` : q.title, description: q.items.join(' · ') }),
   setup,
 })
