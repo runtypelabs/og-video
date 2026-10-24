@@ -42,7 +42,7 @@ export interface Engine {
   poster(scenario: Scenario, params: any, frame?: number, opts?: { assets?: Assets }): Promise<Uint8Array>
   frames(scenario: Scenario, params: any, onFrame: (i: number, rgba: Uint8Array) => void | Promise<void>, opts?: { from?: number; to?: number; assets?: Assets }): Promise<number>
   /** The whole video as AV1 in a progressive MP4 (not streamed), retimed to `fps` (default 120). Needs modules.aom. */
-  av1(scenario: Scenario, params: any, opts?: { assets?: Assets; fps?: number; speed?: number; cq?: number; screen?: boolean }): Promise<{ bytes: Uint8Array; codec: string; encoded: number; frames: number; fps: number }>
+  av1(scenario: Scenario, params: any, opts?: { assets?: Assets; fps?: number; speed?: number; cq?: number; screen?: boolean; yieldToNetwork?: () => Promise<void> }): Promise<{ bytes: Uint8Array; codec: string; encoded: number; frames: number; fps: number }>
 }
 
 export function createNodeEngine(options?: { tailsAtFullRate?: number; images?: ImageOptions }): Promise<Engine>

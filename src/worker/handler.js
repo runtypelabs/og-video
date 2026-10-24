@@ -338,7 +338,7 @@ export function createHandler(options) {
   async function renderAv1(env, scenario, input, key, a) {
     a ??= await getEngine().assets(scenario, input.params)
     const t0 = Date.now()
-    const r = await getEngine().av1(scenario, input.params, { ...av1, fps: av1Fps(scenario), assets: a })
+    const r = await getEngine().av1(scenario, input.params, { ...av1, fps: av1Fps(scenario), assets: a, yieldToNetwork })
     // Date.now() only advances across I/O in Workers: yield once so it covers the render.
     await yieldToNetwork()
     const meta = { codec: r.codec, fps: String(r.fps), encoded: String(r.encoded), renderMs: String(Date.now() - t0) }
@@ -390,7 +390,8 @@ export function createHandler(options) {
     if (!wait) {
       // Play H.264 now; render AV1 for the next viewer (once per key per isolate).
       if (!av1Pending.has(key) && !(await limited(request, env))) {
-        const job = renderAv1(env, scenario, input, key).finally(() => av1Pending.delete(key))
+        // Yield first: the redirect must reach the client before the render takes the CPU.
+        const job = yieldToNetwork().then(() => renderAv1(env, scenario, input, key)).finally(() => av1Pending.delete(key))
         av1Pending.set(key, job)
         ctx.waitUntil(job.catch((error) => console.error(error)))
         ev.av1 = 'started'

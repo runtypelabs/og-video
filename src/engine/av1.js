@@ -25,9 +25,11 @@ export function atFps(scenario, fps) {
 /**
  * Renders and encodes every frame of `run`, skipping frames identical to the previous one (the
  * previous sample then lasts longer) and blocks that did not change. The first and last frames
- * are always encoded. Returns the MP4 bytes and stats.
+ * are always encoded. Awaits `yieldToNetwork` after each encoded frame, so a Worker can flush
+ * responses and serve other requests during a render that takes seconds. Returns the MP4 bytes
+ * and stats.
  */
-export async function encodeAv1(encoder, run, settings = {}) {
+export async function encodeAv1(encoder, run, { yieldToNetwork, ...settings } = {}) {
   const s = { ...AV1_DEFAULTS, ...settings }
   encoder.open(run.width, run.height, run.fps, s)
   const samples = []
@@ -47,6 +49,7 @@ export async function encodeAv1(encoder, run, settings = {}) {
       if (!changed && !must) continue
       push(encoder.encodeYuv(yuv, i, first, first ? undefined : mbInfo))
       first = false
+      if (yieldToNetwork) await yieldToNetwork()
     }
     for (const c of encoder.flush()) push(c)
     if (held) samples.push({ ...held, end: run.frames })
