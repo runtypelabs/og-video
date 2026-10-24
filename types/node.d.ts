@@ -38,7 +38,7 @@ export interface Engine {
   assets(scenario: Scenario, params: any): Promise<Assets>
   prefix(scenario: Scenario, params: any, opts?: { assets?: Assets }): Promise<Prefix>
   tail(scenario: Scenario, params: any, prefix: Prefix, opts: { write(bytes: Uint8Array): void; frameStep?: () => number; yieldToNetwork?: () => Promise<void>; assets?: Assets }): Promise<{ encoded: number; skipped: number }>
-  file(scenario: Scenario, params: any, prefix?: Prefix, opts?: { assets?: Assets }): Promise<Uint8Array>
+  file(scenario: Scenario, params: any, prefix?: Prefix, opts?: { assets?: Assets; yieldToNetwork?: () => Promise<void> }): Promise<Uint8Array>
   poster(scenario: Scenario, params: any, frame?: number, opts?: { assets?: Assets }): Promise<Uint8Array>
   frames(scenario: Scenario, params: any, onFrame: (i: number, rgba: Uint8Array) => void | Promise<void>, opts?: { from?: number; to?: number; assets?: Assets }): Promise<number>
   /** The whole video as AV1 in a progressive MP4 (not streamed), retimed to `fps` (default 120). Needs modules.aom. */

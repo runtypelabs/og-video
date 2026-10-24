@@ -126,11 +126,11 @@ export function createEngine({ modules, fonts: builtins, tailsAtFullRate = 3, im
     tail: (scenario, params, prefix, { write, frameStep: step, yieldToNetwork, assets: a }) =>
       withRun(scenario, params, (r, encoder) => streamTail(encoder, r, prefix, { write, frameStep: step, yieldToNetwork }), a),
     /** The whole MP4 (prefix + tail, every frame), as one buffer. */
-    async file(scenario, params, prefix, { assets: a } = {}) {
+    async file(scenario, params, prefix, { assets: a, yieldToNetwork } = {}) {
       a ??= await assets(scenario, params)
       prefix ??= await this.prefix(scenario, params, { assets: a })
       const parts = [prefix.bytes]
-      await this.tail(scenario, params, prefix, { write: (b) => parts.push(b), assets: a })
+      await this.tail(scenario, params, prefix, { write: (b) => parts.push(b), assets: a, yieldToNetwork })
       return concat(parts)
     },
     /** A frame as PNG: the scenario's poster frame by default. */

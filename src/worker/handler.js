@@ -284,8 +284,8 @@ export function createHandler(options) {
       // Safari probes with `bytes=0-1`, needs the total size, then fetches ranges: render the
       // whole file (every frame, so the bytes match any other render), store it, slice it.
       const t0 = Date.now()
-      const bytes = await eng.file(scenario, input.params, prefix, { assets: a })
-      await yieldToNetwork() // so Date.now() covers the render
+      // Yielding per frame lets other requests in this isolate through, and Date.now() advance.
+      const bytes = await eng.file(scenario, input.params, prefix, { assets: a, yieldToNetwork })
       if (complete) ctx.waitUntil(store(env, key, 'mp4', bytes, 'video/mp4').catch(() => {}))
       ev.bytes = bytes.length
       return sliceResponse(bytes, request, { ...headers, 'x-sogv-render-ms': String(Date.now() - t0) })
