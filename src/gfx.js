@@ -80,6 +80,44 @@ export function bounds(cmds) {
   return { x0, y0, x1, y1 }
 }
 
+// ---------------------------------------------------------------- transforms and paints
+
+/** The affine product m * n: apply n first, then m. */
+export function multiply(m, n) {
+  return [
+    m[0] * n[0] + m[2] * n[1],
+    m[1] * n[0] + m[3] * n[1],
+    m[0] * n[2] + m[2] * n[3],
+    m[1] * n[2] + m[3] * n[3],
+    m[0] * n[4] + m[2] * n[5] + m[4],
+    m[1] * n[4] + m[3] * n[5] + m[5],
+  ]
+}
+
+/**
+ * A transform that rotates by `rotate` degrees and scales by `scale` around `origin` (frame px),
+ * then moves by (x, y). For `g.draw(sprite, { transform })`: the origin is usually the sprite's
+ * centre in frame coordinates.
+ */
+export function pose({ x = 0, y = 0, rotate = 0, scale = 1, origin = [0, 0] } = {}) {
+  const r = (rotate * Math.PI) / 180
+  const sx = Array.isArray(scale) ? scale[0] : scale
+  const sy = Array.isArray(scale) ? scale[1] : scale
+  const c = Math.cos(r)
+  const s = Math.sin(r)
+  const [ox, oy] = origin
+  const a = c * sx, b = s * sx, cc = -s * sy, d = c * sy
+  return [a, b, cc, d, ox + x - (a * ox + cc * oy), oy + y - (b * ox + d * oy)]
+}
+
+/** A linear gradient from (x0, y0) to (x1, y1); stops are [offset, color, alpha?]. */
+export const linear = (x0, y0, x1, y1, stops) => ({ type: 'linear', from: [x0, y0], to: [x1, y1], stops })
+
+/** A radial gradient centred on (cx, cy) with radius r; stops are [offset, color, alpha?]. */
+export const radial = (cx, cy, r, stops) => ({ type: 'radial', center: [cx, cy], radius: r, stops })
+
+const BLEND = { normal: 0, add: 1, screen: 2, multiply: 3, overlay: 4 }
+
 // ---------------------------------------------------------------- frame keys
 
 /**
@@ -112,21 +150,79 @@ export async function createCompositor(module) {
  * @param {any} text from createTextEngine
  * @param {{ width: number, height: number, fps: number, frames: number }} video
  * @param {(ctx: any) => any} setup
+ * @param {{ images?: Map<string, Uint8Array | null>, decoded?: { get(k: string): any, set(k: string, v: any): void } }} [assets]
+ *   Fetched image bytes by URL (null when the fetch failed) and a cache of decoded sprites.
  */
-export function createRun(compositor, text, video, setup) {
+export function createRun(compositor, text, video, setup, assets = {}) {
   const { x } = compositor
   const { width: W, height: H, fps } = video
   if (x.init(W, H) !== 0) throw new Error(`unsupported frame size ${W}x${H}: the width must be a multiple of 16 and the height even`)
   x.reset()
+  const missing = new Set()
+
+  /** Copies `data` into wasm memory for the duration of `fn(ptr)`. */
+  const withBytes = (data, fn) => {
+    const p = x.alloc(data.byteLength)
+    new Uint8Array(x.memory.buffer, p, data.byteLength).set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
+    try {
+      return fn(p)
+    } finally {
+      x.dealloc(p, data.byteLength)
+    }
+  }
 
   const path = (cmds) => {
     if (!cmds.length) return null
-    const f = new Float32Array(cmds)
-    const p = x.alloc(f.byteLength)
-    new Float32Array(x.memory.buffer, p, f.length).set(f)
-    const id = x.path_new(p, f.length)
-    x.dealloc(p, f.byteLength)
+    const id = withBytes(new Float32Array(cmds), (p) => x.path_new(p, cmds.length))
     return id < 0 ? null : { id }
+  }
+
+  const spriteOf = (id) => ({ id, x: x.sprite_x(id), y: x.sprite_y(id), w: x.sprite_w(id), h: x.sprite_h(id) })
+  const pixels = (sp) => new Uint8Array(x.memory.buffer, x.sprite_ptr(sp.id), sp.w * sp.h * 4)
+
+  // The argument block shared by draw_ex / fill_ex / sprite_fill_ex (layout in crates/ogfx).
+  // Views on wasm memory go stale when it grows, so it is re-viewed per call.
+  const args = () => {
+    const a = new Float32Array(x.memory.buffer, x.args_ptr(), 96)
+    a.fill(0)
+    a[4] = -1e6; a[5] = -1e6; a[6] = 1e6; a[7] = 1e6
+    a.set([1, 0, 0, 1, 0, 0], 8)
+    a[14] = -1
+    a.set([1, 0, 0, 1, 0, 0], 17)
+    return a
+  }
+  const blendCode = (name = 'normal') => {
+    const b = BLEND[name]
+    if (b === undefined) throw new Error(`unknown blend mode "${name}" (normal, add, screen, multiply, overlay)`)
+    return b
+  }
+  const setMask = (a, mask) => {
+    if (!mask) return
+    const m = mask.sprite ? mask : { sprite: mask }
+    if (!m.sprite) return
+    a[14] = m.sprite.id
+    a[15] = m.mode === 'luma' ? 1 : 0
+    a[16] = m.invert ? 1 : 0
+    if (m.transform) a.set(m.transform, 17)
+  }
+  /** Writes a solid colour or gradient (see linear, radial) at args[3] and args[24..]. */
+  const setPaint = (a, paint) => {
+    if (paint && typeof paint === 'object') {
+      const stops = paint.stops.slice(0, 13)
+      if (paint.type === 'linear') {
+        a[24] = 1
+        a.set([...paint.from, ...paint.to], 25)
+      } else {
+        a[24] = 2
+        a.set([...paint.center, paint.radius], 25)
+      }
+      a[29] = stops.length
+      stops.forEach(([offset, color, alpha = 1], i) => {
+        const c = rgb(color)
+        a.set([offset, ((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255, alpha], 30 + i * 5)
+      })
+      a[3] = 0
+    } else a[3] = rgb(paint)
   }
 
   const sprite = (layers, { margin = 2 } = {}) => {
@@ -141,16 +237,127 @@ export function createRun(compositor, text, video, setup) {
     const id = x.sprite_new(sx, sy, Math.ceil(x1) + margin - sx, Math.ceil(y1) + margin - sy)
     for (const l of layers) {
       const p = path(l.cmds)
-      if (p) x.sprite_fill(id, p.id, rgb(l.color), l.alpha ?? 1, l.evenodd ? 1 : 0, 1, 0, 0, 1, 0, 0)
+      if (!p) continue
+      if (typeof l.color === 'object' || l.blend) {
+        const a = args()
+        a[0] = p.id
+        a[1] = l.alpha ?? 1
+        a[2] = blendCode(l.blend)
+        a[23] = l.evenodd ? 1 : 0
+        setPaint(a, l.color)
+        x.sprite_fill_ex(id)
+      } else x.sprite_fill(id, p.id, rgb(l.color), l.alpha ?? 1, l.evenodd ? 1 : 0, 1, 0, 0, 1, 0, 0)
     }
-    return { id }
+    return spriteOf(id)
   }
 
   /** A sprite whose premultiplied RGBA pixels the caller writes. */
   const bitmap = (bx, by, bw, bh, paint) => {
     const id = x.sprite_new(bx, by, bw, bh)
     paint(new Uint8Array(x.memory.buffer, x.sprite_ptr(id), bw * bh * 4), bw, bh)
-    return { id }
+    return spriteOf(id)
+  }
+
+  /** Cuts a sprite to a shape (frame coordinates), or away from it with `invert`. */
+  const clip = (sp, cmds, { invert = false, evenodd = false } = {}) => {
+    const p = sp && path(cmds)
+    if (p) x.sprite_clip(sp.id, p.id, evenodd ? 1 : 0, invert ? 1 : 0)
+    return sp
+  }
+
+  /** A drop shadow or glow for `sp`: its alpha, grown by `spread`, blurred, in `color`. */
+  const shadow = (sp, { blur = 12, color = '#000000', opacity = 0.35, spread = 0 } = {}) =>
+    sp ? spriteOf(x.sprite_shadow(sp.id, blur, rgb(color), opacity, spread)) : null
+
+  /**
+   * An image param, decoded and fitted into the box (x, y, w, h): `cover` crops to fill it,
+   * `contain` fits inside it, `fill` stretches. Null when the image could not be fetched or
+   * decoded (the render is then not cached).
+   */
+  const image = (src, { x: bx = 0, y: by = 0, w, h, fit = 'cover', position = [0.5, 0.5], radius = 0 } = {}) => {
+    if (!src) return null
+    if (!(w > 0 && h > 0)) throw new Error('ctx.image needs a box: { x, y, w, h }')
+    const bytes = assets.images?.get(src)
+    if (!bytes) {
+      missing.add(src)
+      return null
+    }
+    const key = `${src}|${bx},${by},${w},${h}|${fit}|${position}|${radius}`
+    const hit = assets.decoded?.get(key)
+    if (hit) return bitmap(hit.x, hit.y, hit.w, hit.h, (px) => px.set(hit.px))
+    const rc = withBytes(bytes, (p) => x.image_decode(p, bytes.byteLength, Math.ceil(w), Math.ceil(h)))
+    if (rc < 0) {
+      missing.add(src)
+      return null
+    }
+    const iw = x.image_width()
+    const ih = x.image_height()
+    let crop = [0, 0, iw, ih]
+    let box = [bx, by, w, h]
+    if (fit === 'cover') {
+      const k = Math.max(w / iw, h / ih)
+      const cw = w / k, ch = h / k
+      crop = [(iw - cw) * position[0], (ih - ch) * position[1], cw, ch]
+    } else if (fit === 'contain') {
+      const k = Math.min(w / iw, h / ih)
+      const dw = iw * k, dh = ih * k
+      box = [bx + (w - dw) * position[0], by + (h - dh) * position[1], dw, dh]
+    }
+    const sx = Math.round(box[0]), sy = Math.round(box[1])
+    const sw = Math.max(1, Math.round(box[0] + box[2]) - sx), sh = Math.max(1, Math.round(box[1] + box[3]) - sy)
+    const id = x.sprite_new(sx, sy, sw, sh)
+    x.image_to_sprite(id, ...crop)
+    x.image_free()
+    const sp = spriteOf(id)
+    if (radius > 0) clip(sp, rrect(sx, sy, sw, sh, radius))
+    assets.decoded?.set(key, { x: sx, y: sy, w: sw, h: sh, px: pixels(sp).slice() })
+    return sp
+  }
+
+  /**
+   * A dot-matrix (halftone) of `source`: the sprite is sampled on a grid of `pitch` px cells
+   * inside `box` (default: the sprite's bounds); each cell with coverage becomes a dot of `size`
+   * px whose value is its coverage (and whose colour is the source's). `order(dot, random)`
+   * gives each dot a reveal threshold in [0, 1] (default: random), for g.dots' dissolves.
+   */
+  const dots = (source, { box, pitch = 6, size = Math.round(pitch * 0.5), round = false, min = 0.04, gamma = 1, seed = 1, order } = {}) => {
+    if (!source) return null
+    const sp = Array.isArray(source) ? sprite(source) : source
+    if (!sp) return null
+    const [bx, by, bw, bh] = box ?? [sp.x, sp.y, sp.w, sp.h]
+    const px = pixels(sp)
+    const random = mulberry(seed)
+    const out = []
+    const half = Math.floor((pitch - size) / 2)
+    const cols = Math.floor(bw / pitch), rows = Math.floor(bh / pitch)
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x0 = bx + c * pitch + half, y0 = by + r * pitch + half
+        // Average the footprint of the dot in the source.
+        let sr = 0, sg = 0, sb = 0, sa = 0, n = 0
+        for (let yy = y0; yy < y0 + size; yy++) {
+          const ly = yy - sp.y
+          if (ly < 0 || ly >= sp.h) { n += size; continue }
+          for (let xx = x0; xx < x0 + size; xx++) {
+            n++
+            const lx = xx - sp.x
+            if (lx < 0 || lx >= sp.w) continue
+            const o = (ly * sp.w + lx) * 4
+            sr += px[o]; sg += px[o + 1]; sb += px[o + 2]; sa += px[o + 3]
+          }
+        }
+        const value = (sa / (n * 255)) ** gamma
+        const rnd = random()
+        if (value < min) continue
+        const color = sa > 0 ? (Math.round((sr / sa) * 255) << 16) | (Math.round((sg / sa) * 255) << 8) | Math.round((sb / sa) * 255) : 0xffffff
+        const dot = { x: x0, y: y0, u: (c + 0.5) / cols, v: (r + 0.5) / rows, value, color }
+        const t = order ? order(dot, rnd) : rnd
+        out.push(x0, y0, value, Math.max(0, Math.min(1, t)), color)
+      }
+    }
+    if (!out.length) return null
+    const id = withBytes(new Float32Array(out), (p) => x.dots_new(p, out.length / 5, size, round ? 1 : 0))
+    return { id, count: out.length / 5 }
   }
 
   /**
@@ -229,17 +436,43 @@ export function createRun(compositor, text, video, setup) {
       keys[idx] = k
       idx++
     },
-    fill(p, color, { alpha = 1, transform: t } = {}) {
+    fill(p, color, { alpha = 1, transform: t, clip: c, mask, blend, evenodd } = {}) {
       if (!p || alpha <= 0) return
       beforeDraw()
-      const [a, b, c, d, e, f] = t ?? [1, 0, 0, 1, 0, 0]
-      x.fill(p.id, rgb(color), alpha, a, b, c, d, e, f)
+      if (typeof color !== 'object' && !c && !mask && !blend && !evenodd) {
+        const [a, b, cc, d, e, f] = t ?? [1, 0, 0, 1, 0, 0]
+        x.fill(p.id, rgb(color), alpha, a, b, cc, d, e, f)
+        return
+      }
+      const a = args()
+      a[0] = p.id
+      a[1] = alpha
+      a[2] = blendCode(blend)
+      a[23] = evenodd ? 1 : 0
+      setPaint(a, color)
+      if (c) a.set(c, 4)
+      if (t) a.set(t, 8)
+      setMask(a, mask)
+      x.fill_ex()
     },
-    draw(s, { opacity = 1, blur = 0, clip } = {}) {
+    draw(s, { opacity = 1, blur = 0, clip: c, transform: t, blend, mask } = {}) {
       if (!s || opacity <= 0) return
       beforeDraw()
-      if (clip) x.sprite_draw_clip(s.id, opacity, blur, clip[0], clip[1], clip[2], clip[3])
-      else x.sprite_draw(s.id, opacity, blur)
+      const a = args()
+      a[0] = s.id
+      a[1] = opacity
+      a[2] = blur
+      a[3] = blendCode(blend)
+      if (c) a.set(c, 4)
+      if (t) a.set(t, 8)
+      setMask(a, mask)
+      x.draw_ex()
+    },
+    dots(field, { progress = 1, softness = 0.25, opacity = 1, grow = false, color, reverse = false } = {}) {
+      if (!field || opacity <= 0 || progress <= 0) return
+      beforeDraw()
+      const soft = Math.max(0, softness)
+      x.dots_draw(field.id, progress * (1 + soft), soft, opacity, grow ? 1 : 0, color === undefined ? -1 : rgb(color), reverse ? 1 : 0)
     },
     grid(effect, { radius, opacity = 1, scale = 1, x: tx = 0, y: ty = 0 }) {
       if (!inLayer) throw new Error('g.grid() repaints the whole frame, so it belongs in a layer')
@@ -260,7 +493,7 @@ export function createRun(compositor, text, video, setup) {
     },
   }
 
-  const ctx = { width: W, height: H, fps, frames: video.frames, text, path, sprite, bitmap, grid }
+  const ctx = { width: W, height: H, fps, frames: video.frames, text, path, sprite, bitmap, grid, clip, shadow, image, dots, mask: (cmds, o) => sprite([{ cmds, color: 0xffffff, evenodd: o?.evenodd }], o) }
   const scene = setup(ctx)
   const frames = video.frames
   let lastKey = null
@@ -302,6 +535,19 @@ export function createRun(compositor, text, video, setup) {
         mbInfo: new Uint8Array(x.memory.buffer, x.mb_info_ptr(), mbs),
       }
     },
+    /** Image params that could not be fetched or decoded: such a render must not be cached. */
+    missing,
     dispose: () => scene.dispose?.(),
+  }
+}
+
+/** mulberry32: a small deterministic PRNG. */
+function mulberry(seed) {
+  let h = seed | 0
+  return () => {
+    h = (h + 0x6d2b79f5) | 0
+    let t = Math.imul(h ^ (h >>> 15), 1 | h)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }

@@ -14,7 +14,7 @@ import { buildPrefix, streamTail, encodeFrames, codecString } from './encode.js'
 import { encodePng } from './png.js'
 
 /** Bump whenever the bytes a render produces change: cache keys include it. */
-export const ENGINE_VERSION = '1'
+export const ENGINE_VERSION = '2'
 
 /** Fonts every scenario gets unless it overrides the name. */
 export const DEFAULT_FONTS = { regular: 'inter-regular', semibold: 'inter-semibold' }

@@ -10,6 +10,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+# Image inputs: decoders only, pure Rust.
+jpeg-decoder = { version = "0.3", default-features = false }
+png = "0.18"
+image-webp = "0.2"
 
 [profile.release]
 opt-level = 3
