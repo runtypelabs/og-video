@@ -748,7 +748,9 @@ fn sample_row(pix: &[u32], w: usize, h: usize, u0: f32, v0: f32, du: f32, dv: f3
         let (fu, fv) = (((u >> 8) & 255) as u32, ((v >> 8) & 255) as u32);
         *o = if x >= 0 && y >= 0 && x + 1 < wi && y + 1 < hi {
             let i = y as usize * w + x as usize;
-            lerp_px(lerp_px(pix[i], pix[i + 1], fu), lerp_px(pix[i + w], pix[i + w + 1], fu), fv)
+            let (a, b, c, d) = (pix[i], pix[i + 1], pix[i + w], pix[i + w + 1]);
+            // Sprites are mostly transparent (text, shapes): skip the maths for empty taps.
+            if a | b | c | d == 0 { 0 } else { lerp_px(lerp_px(a, b, fu), lerp_px(c, d, fu), fv) }
         } else if x < -1 || y < -1 || x >= wi || y >= hi {
             0
         } else {
@@ -783,6 +785,29 @@ impl<'a> Placed<'a> {
             Some((dx, dy)) => Rect { x0: self.x + dx, y0: self.y + dy, x1: self.x + dx + self.w as i32, y1: self.y + dy + self.h as i32 },
             None => Rect::outer(self.tf.bounds(self.x as f32, self.y as f32, (self.x + self.w as i32) as f32, (self.y + self.h as i32) as f32)),
         }
+    }
+
+    /// The columns [a, b) of frame row `fy`, within [x0, x1), that can sample the sprite at all:
+    /// a rotated sprite's bounding box is mostly empty.
+    fn span(&self, fy: i32, x0: i32, x1: i32) -> (i32, i32) {
+        if self.tf.offset().is_some() { return (x0, x1); }
+        let Some(inv) = self.tf.invert() else { return (x0, x0) };
+        let (px, py) = inv.apply(x0 as f32 + 0.5, fy as f32 + 0.5);
+        let [a, b, ..] = inv.0;
+        let (mut lo, mut hi) = (0f32, (x1 - x0) as f32);
+        // Texel coordinate t0 + k * d must stay in (-1, n) for some tap to be inside.
+        for (t0, d, n) in [(px - self.x as f32 - 0.5, a, self.w as f32), (py - self.y as f32 - 0.5, b, self.h as f32)] {
+            if d.abs() < 1e-9 {
+                if t0 <= -1.0 || t0 >= n { return (x0, x0); }
+                continue;
+            }
+            let (k0, k1) = ((-1.0 - t0) / d, (n - t0) / d);
+            lo = lo.max(k0.min(k1));
+            hi = hi.min(k0.max(k1));
+        }
+        if hi <= lo { return (x0, x0); }
+        // One pixel of slack on each side for rounding; the sampler handles the edges.
+        ((x0 + lo.floor() as i32 - 1).max(x0), (x0 + hi.ceil() as i32 + 1).min(x1))
     }
 
     /// Fills `out` with the sprite's pixels for frame row `fy`, columns [fx0, fx0 + out.len()).
@@ -960,9 +985,13 @@ pub extern "C" fn draw_ex() {
             if mode == NORMAL { blend_row(d, srow, op) } else { blend_mode_row(d, srow, op, mode) }
             continue;
         }
-        placed.row(y, r.x0, &mut row[..rw]);
-        if masked { apply_mask(&mut row[..rw], &mask[(y - r.y0) as usize * rw..(y - r.y0 + 1) as usize * rw]); }
-        let srow = unsafe { std::slice::from_raw_parts(row.as_ptr() as *const u8, rw * 4) };
+        let (sa, sb) = placed.span(y, r.x0, r.x1);
+        if sb <= sa { continue; }
+        let (ka, kb) = ((sa - r.x0) as usize, (sb - r.x0) as usize);
+        placed.row(y, sa, &mut row[ka..kb]);
+        if masked { apply_mask(&mut row[ka..kb], &mask[(y - r.y0) as usize * rw + ka..(y - r.y0) as usize * rw + kb]); }
+        let srow = unsafe { std::slice::from_raw_parts(row.as_ptr().add(ka) as *const u8, (kb - ka) * 4) };
+        let d = &mut d[ka * 4..kb * 4];
         if mode == NORMAL { blend_row(d, srow, op) } else { blend_mode_row(d, srow, op, mode) }
     }
     s.mask_buf = mask;

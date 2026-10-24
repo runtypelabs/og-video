@@ -4,9 +4,13 @@
 // encoded just now, so every render of the same params produces the same bytes.
 import { Muxer, StreamTarget } from 'mp4-muxer'
 
-/** x264 settings: fast, constant quality, no B-frames (so samples come out in display order). */
-export const X264_PARAMS =
-  'preset=ultrafast:qp=20:bframes=0:colorprim=bt709:transfer=bt709:colormatrix=bt709:keyint=infinite:scenecut=0'
+/**
+ * x264 settings: fast, constant quality, no B-frames (so samples come out in display order). qp 20
+ * suits flat vector art; dense motion of fine detail (many small moving words) can use a higher
+ * qp through the scenario's `video.qp`, for a smaller file and a faster encode.
+ */
+export const x264Params = (qp = 20) =>
+  `preset=ultrafast:qp=${qp}:bframes=0:colorprim=bt709:transfer=bt709:colormatrix=bt709:keyint=infinite:scenecut=0`
 
 /**
  * Renders and encodes frames [from, to). Calls onSample({ data, key, pts, end }) for each encoded
@@ -16,7 +20,7 @@ export const X264_PARAMS =
  */
 export async function encodeFrames(encoder, run, { from = 0, to, onOpen, onSample, yieldToNetwork, frameStep = () => 1 }) {
   const end = to ?? run.frames
-  encoder.open(run.width, run.height, run.fps, X264_PARAMS)
+  encoder.open(run.width, run.height, run.fps, x264Params(run.qp))
   const avcC = encoder.avcC()
   onOpen?.(avcC)
   let held = null

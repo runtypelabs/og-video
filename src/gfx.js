@@ -503,6 +503,7 @@ export function createRun(compositor, text, video, setup, assets = {}) {
     height: H,
     fps,
     frames,
+    qp: video.qp ?? 20,
     /** Draws frame i; false when its state equals the previous frame's (nothing was drawn). */
     frame(i) {
       const s = scene.state(i)

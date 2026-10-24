@@ -11,7 +11,8 @@ export function defineScenario(def) {
   if (!ID.test(def.id ?? '')) throw new Error(`scenario id must match ${ID}: ${def.id}`)
   if (!def.params?.['~standard']) throw new Error(`${def.id}: params must be a schema (p.object(...) or any Standard Schema)`)
   if (typeof def.setup !== 'function') throw new Error(`${def.id}: setup(ctx, params) is required`)
-  const video = { width: 1200, height: 630, fps: 30, frames: 210, ...def.video }
+  const video = { width: 1200, height: 630, fps: 30, frames: 210, qp: 20, ...def.video }
+  if (!(Number.isInteger(video.qp) && video.qp >= 10 && video.qp <= 40)) throw new Error(`${def.id}: video.qp must be an integer in [10, 40]`)
   if (video.width % 16 || video.height % 2) throw new Error(`${def.id}: width must be a multiple of 16 and height even`)
   const prefix = def.prefix ? { key: () => '', ...def.prefix } : { frames: 1, key: () => '' }
   if (!(prefix.frames >= 1 && prefix.frames < video.frames)) throw new Error(`${def.id}: prefix.frames must be in [1, ${video.frames})`)
