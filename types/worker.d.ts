@@ -56,6 +56,10 @@ export interface HandlerOptions {
   tailsAtFullRate?: number
   /** Extra font sources by built-in name. */
   fonts?: Record<string, FontSource>
+  /** Serve every route under this prefix (e.g. '/v1') and use it in links. Default: none. */
+  basePath?: string
+  /** With basePath, also serve the unprefixed routes. Default: false. */
+  legacyPaths?: boolean
   siteName?: string
   /** Custom share page HTML. */
   page?(o: { page: string; video: string; image: string; width: number; height: number; title?: string; description?: string; siteName?: string; scenario: Scenario; params: any }): string
@@ -67,7 +71,7 @@ export interface HandlerOptions {
 }
 
 export function createHandler(options: HandlerOptions): { fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response> }
-export function videoUrl(origin: string, scenario: Scenario, params: unknown, opts?: { secret?: string }): Promise<{ video: string; image: string; page: string }>
+export function videoUrl(origin: string, scenario: Scenario, params: unknown, opts?: { secret?: string; basePath?: string }): Promise<{ video: string; image: string; page: string }>
 export function kvStore(bindings: { kv?: string; r2?: string }): StateStore
 export function isName(id: string): boolean
 export function ogTags(o: { page: string; video: string; image: string; width: number; height: number; title?: string; description?: string; siteName?: string }): string
