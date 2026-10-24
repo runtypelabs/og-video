@@ -29,6 +29,8 @@ const LABEL_PITCH = 6
 const OVERLAP = 0.2
 
 const ICONS = ['search', 'brand', 'map', 'monitor', 'scrape', 'code', 'chart']
+/** The label an icon gets when none is given. */
+const LABELS = { search: 'search', brand: 'logos', map: 'sitemap', monitor: 'monitor', scrape: 'scrape', code: 'code', chart: 'charts' }
 
 export const dotMatrix = defineScenario({
   id: 'dot-matrix',
@@ -47,7 +49,7 @@ export const dotMatrix = defineScenario({
       {
         min: 1,
         max: 6,
-        default: () => ['search', 'brand', 'map', 'monitor'].map((icon) => ({ icon, label: icon })),
+        default: () => ['search', 'brand', 'map', 'monitor'].map((icon) => ({ icon, label: LABELS[icon] })),
       },
     ),
   }),
@@ -250,7 +252,7 @@ function setup(ctx, q) {
       // Mostly a left-to-right sweep, broken up with noise.
       order: (d, r) => 0.55 * d.u + 0.45 * r,
     })
-    const label = (it.label || it.icon).toUpperCase()
+    const label = (it.label || LABELS[it.icon]).toUpperCase()
     const px = pixelText(label)
     const lw = px.cols * LABEL_PITCH
     const lx = Math.round(pcx - lw / 2), ly = boxY + BOX_H + 66
