@@ -53,13 +53,13 @@ Use this skill to:
 
 ## Using the hosted service (og.video)
 
-- Video: `https://og.video/<scenario>.mp4?<params>`
+- Video: `https://og.video/v1/<scenario>.mp4?<params>`
 - Poster: `.png`
 - Share page with og:video tags: no extension
 
 Put the share page URL (or your own page with `og:video` pointing at the `.mp4`) where you want the preview. Params are query strings; arrays and objects go as JSON or packed:
-- `GET /<scenario>.json?<params>` shows the resolved params, the content id, and a packed `?s=` URL.
-- `POST /<scenario>` with a JSON body stores long params and returns a short `/<scenario>/<id>.mp4`.
+- `GET /v1/<scenario>.json?<params>` shows the resolved params, the content id, and a packed `?s=` URL.
+- `POST /v1/<scenario>` with a JSON body stores long params and returns a short `/v1/<scenario>/<id>.mp4`.
 
 ## Self-hosting
 

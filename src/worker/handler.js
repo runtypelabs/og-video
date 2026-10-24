@@ -14,6 +14,9 @@
 // is written first, then the live tail one fragment per frame. When the tail rendered every frame
 // the whole file is stored, so the next request anywhere is a cache hit. Renders are
 // deterministic, so a byte range of a fresh render matches the stored file exactly.
+//
+// With `basePath` (e.g. '/v1') every route above lives under it, and links use it.
+// `legacyPaths` keeps serving the unprefixed routes too.
 import ogfxModule from '../../wasm/ogfx.wasm'
 import x264Module from '../../wasm/x264.wasm'
 import interRegular from '../../fonts/Inter-Regular.ttf.bin'
@@ -57,6 +60,7 @@ export function createHandler(options) {
     ...options,
   }
   if (o.signatures === 'required' && !o.secret) throw new Error('signatures: "required" needs a secret binding name')
+  const basePath = normalizeBase(o.basePath)
   const R2 = o.bucket
   const prefixes = new Map()
 
@@ -302,7 +306,7 @@ export function createHandler(options) {
 
   async function links(request, env, scenario, input) {
     const origin = new URL(request.url).origin
-    const base = `${origin}/${scenario.id}`
+    const base = `${origin}${basePath}/${scenario.id}`
     if (input.id) return { page: `${base}/${input.id}`, video: `${base}/${input.id}.mp4`, image: `${base}/${input.id}.png` }
     const search = new URL(request.url).search
     return { page: `${base}${search}`, video: `${base}.mp4${search}`, image: `${base}.png${search}` }
@@ -373,10 +377,15 @@ export function createHandler(options) {
     if (method === 'OPTIONS')
       return new Response(null, { headers: { ...CORS, 'access-control-allow-methods': 'GET, HEAD, POST, PUT, OPTIONS', 'access-control-allow-headers': 'authorization, content-type, range' } })
     if (url.pathname === '/' && o.home) return o.home(request, env, ctx)
-    if (url.pathname === '/')
-      return json({ scenarios: [...scenarios.keys()].map((id) => ({ id, video: `${url.origin}/${id}.mp4`, page: `${url.origin}/${id}` })) })
+    let path = url.pathname
+    if (basePath && (path === basePath || path.startsWith(`${basePath}/`))) path = path.slice(basePath.length) || '/'
+    else if (basePath && !o.legacyPaths && path !== '/') path = null
+    if (path === '/') {
+      const root = `${url.origin}${basePath}`
+      return json({ scenarios: [...scenarios.keys()].map((id) => ({ id, video: `${root}/${id}.mp4`, page: `${root}/${id}` })) })
+    }
 
-    const m = url.pathname.match(ROUTE)
+    const m = path?.match(ROUTE)
     const scenario = m && scenarios.get(m[1])
     if (!scenario) return o.notFound ? o.notFound(request, env, ctx) : json({ error: 'not found' }, 404)
     const [, , id, ext] = m
@@ -404,7 +413,7 @@ export function createHandler(options) {
             params: input.params,
             canonical: canonical(input.params),
             ...(await links(request, env, scenario, input)),
-            packed: input.id ? undefined : `${url.origin}/${scenario.id}.mp4?s=${await pack(input.params)}${secret ? `&sig=${await sign(secret, scenario.id, input.params)}` : ''}`,
+            packed: input.id ? undefined : `${url.origin}${basePath}/${scenario.id}.mp4?s=${await pack(input.params)}${secret ? `&sig=${await sign(secret, scenario.id, input.params)}` : ''}`,
           })
         } else res = await page(request, env, ctx, scenario, input)
       } else res = json({ error: 'method not allowed' }, 405)
@@ -429,7 +438,7 @@ export function createHandler(options) {
  * flat, the packed `s=` form otherwise, signed when a secret is given.
  * @returns {Promise<{ video: string, image: string, page: string }>}
  */
-export async function videoUrl(origin, scenario, params, { secret } = {}) {
+export async function videoUrl(origin, scenario, params, { secret, basePath } = {}) {
   const valid = await validate(scenario.params, params)
   const flat = Object.values(valid).every((v) => typeof v !== 'object')
   const q = new URLSearchParams()
@@ -439,6 +448,14 @@ export async function videoUrl(origin, scenario, params, { secret } = {}) {
     q.set('s', await pack(valid))
   }
   if (secret) q.set('sig', await sign(secret, scenario.id, valid))
-  const base = `${origin.replace(/\/$/, '')}/${scenario.id}`
+  const base = `${origin.replace(/\/$/, '')}${normalizeBase(basePath)}/${scenario.id}`
   return { video: `${base}.mp4?${q}`, image: `${base}.png?${q}`, page: `${base}?${q}` }
+}
+
+/** '' or '/segment[/segment]' with no trailing slash. */
+function normalizeBase(path) {
+  if (!path || path === '/') return ''
+  const p = `/${path.replace(/^\/+|\/+$/g, '')}`
+  if (!/^(\/[A-Za-z0-9._-]+)+$/.test(p)) throw new Error(`basePath must look like '/v1', got ${path}`)
+  return p
 }

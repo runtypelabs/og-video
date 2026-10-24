@@ -5,11 +5,11 @@ Animated `og:video` link previews, rendered inside a Cloudflare Worker and strea
 **Just want a URL?** Use the hosted version at **[og.video](https://og.video)**:
 
 ```html
-<meta property="og:video" content="https://og.video/title-card.mp4?title=We%20shipped%20it&kicker=Launch&brand=acme">
+<meta property="og:video" content="https://og.video/v1/title-card.mp4?title=We%20shipped%20it&kicker=Launch&brand=acme">
 <meta property="og:video:type" content="video/mp4">
 <meta property="og:video:width" content="1200">
 <meta property="og:video:height" content="630">
-<meta property="og:image" content="https://og.video/title-card.png?title=We%20shipped%20it&kicker=Launch&brand=acme">
+<meta property="og:image" content="https://og.video/v1/title-card.png?title=We%20shipped%20it&kicker=Launch&brand=acme">
 ```
 
 ![The built-in scenarios: title-card, diagram, kinetic, metric, bars, release](docs/images/scenarios.png)
@@ -69,6 +69,8 @@ export default createHandler({
 | `GET /<scenario>.json?<params>` | Resolved params, content id, links, and a packed `?s=` URL |
 | `POST /<scenario>` (JSON body) | Stores params and returns `/<scenario>/<id>.mp4` (the id is a content hash) |
 | `PUT /<scenario>/<name>` | Stores params under a name (needs the bearer token) |
+
+Routes can live under a version prefix: `createHandler({ basePath: '/v1' })` serves `/v1/<scenario>.mp4` and uses the prefix in every link it returns (`videoUrl(..., { basePath })` does the same). Add `legacyPaths: true` to keep serving the unprefixed routes too. og.video uses `/v1`.
 
 Params are query strings. Arrays and objects go as JSON, or as `?s=`: canonical JSON, deflated and base64url-encoded, about 3× shorter. Query keys the scenario doesn't declare, such as `utm_source`, are ignored and don't affect the cache key.
 
@@ -136,12 +138,12 @@ The [skill](skills/streaming-og-video/SKILL.md) covers the mental model, the ful
 
 | Id | What it is | Try it |
 |---|---|---|
-| `title-card` | An announcement card: a grid reveal, a pixel wordmark that flips into the header, a typed kicker, then the title words blur in | [og.video/title-card](https://og.video/title-card?title=We%20shipped%20it&kicker=Launch&brand=acme) |
-| `diagram` | An architecture card: lanes of nodes wipe in, edges draw, packets travel between them, and stats count up. Nodes come from JSON or the `graph` shorthand: `Agents: Bot@bot \| Surfaces: Slack@chat` | [og.video/diagram](https://og.video/diagram) |
-| `kinetic` | Kinetic type: a headline rises word by word, and `*starred words*` land in the accent colour with a highlight block | [og.video/kinetic](https://og.video/kinetic) |
-| `metric` | A big number rolls up like an odometer over a trend line that draws itself, with a delta pill | [og.video/metric](https://og.video/metric) |
-| `bars` | A bar chart grows in a staggered wave, values count up, the highlighted bar lands in the accent, and an average line sweeps across | [og.video/bars](https://og.video/bars) |
-| `release` | Release notes: a huge version number rises behind the title, and each item slides in with its icon | [og.video/release](https://og.video/release) |
+| `title-card` | An announcement card: a grid reveal, a pixel wordmark that flips into the header, a typed kicker, then the title words blur in | [og.video/v1/title-card](https://og.video/v1/title-card?title=We%20shipped%20it&kicker=Launch&brand=acme) |
+| `diagram` | An architecture card: lanes of nodes wipe in, edges draw, packets travel between them, and stats count up. Nodes come from JSON or the `graph` shorthand: `Agents: Bot@bot \| Surfaces: Slack@chat` | [og.video/v1/diagram](https://og.video/v1/diagram) |
+| `kinetic` | Kinetic type: a headline rises word by word, and `*starred words*` land in the accent colour with a highlight block | [og.video/v1/kinetic](https://og.video/v1/kinetic) |
+| `metric` | A big number rolls up like an odometer over a trend line that draws itself, with a delta pill | [og.video/v1/metric](https://og.video/v1/metric) |
+| `bars` | A bar chart grows in a staggered wave, values count up, the highlighted bar lands in the accent, and an average line sweeps across | [og.video/v1/bars](https://og.video/v1/bars) |
+| `release` | Release notes: a huge version number rises behind the title, and each item slides in with its icon | [og.video/v1/release](https://og.video/v1/release) |
 
 All six take `accent`, and the newer four also take `theme=light`. `GET /<scenario>.json` lists the resolved params with their defaults.
 
