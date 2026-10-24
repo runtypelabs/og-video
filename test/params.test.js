@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { p, validate, ParamError } from '../src/schema.js'
+import { p, validate, ParamError, imageUrls } from '../src/schema.js'
 import { canonical, contentId, pack, unpack, sign, verify, rawParams } from '../src/params.js'
 
 const schema = p.object({
@@ -53,4 +53,15 @@ test('signatures cover the validated params, however the URL spelled them', asyn
 test('an explicit empty string clears a string field; other kinds treat it as missing', async () => {
   const s = p.object({ kicker: p.string({ default: 'New' }), n: p.int({ default: 3 }) })
   assert.deepEqual(await validate(s, { kicker: '', n: '' }), { kicker: '', n: 3 })
+})
+
+test('p.image: http(s) URLs and base64 data:image URIs only; imageUrls finds them all', async () => {
+  const s = p.object({ hero: p.image({ optional: true }), wall: p.array(p.image(), { max: 3, default: [] }), title: p.string({ default: '' }) })
+  const v = await validate(s, { hero: 'https://example.com/a.png', wall: '["http://example.com/b.jpg","data:image/png;base64,iVBORw0KGgo="]' })
+  assert.equal(v.hero, 'https://example.com/a.png')
+  assert.deepEqual(imageUrls(s, v), ['https://example.com/a.png', 'http://example.com/b.jpg', 'data:image/png;base64,iVBORw0KGgo='])
+  await assert.rejects(validate(s, { hero: 'file:///etc/passwd' }), /hero: expected an http\(s\) URL/)
+  await assert.rejects(validate(s, { hero: 'javascript:alert(1)' }), ParamError)
+  await assert.rejects(validate(s, { hero: 'data:text/html;base64,PGI+' }), ParamError)
+  await assert.rejects(validate(s, { hero: `https://example.com/${'x'.repeat(2048)}` }), /at most 2048/)
 })

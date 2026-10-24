@@ -69,6 +69,7 @@ export function createHandler(options) {
       modules: { ogfx: ogfxModule, x264: x264Module },
       fonts: { 'inter-regular': interRegular, 'inter-semibold': interSemiBold, ...o.fonts },
       tailsAtFullRate: o.tailsAtFullRate,
+      images: o.images,
     }))
 
   const secretOf = (env) => {
@@ -129,8 +130,11 @@ export function createHandler(options) {
     return !success
   }
 
-  /** The scenario's prefix for these params: memory, then R2, then encoded now (and stored). */
-  function getPrefix(env, ctx, scenario, params) {
+  /**
+   * The scenario's prefix for these params: memory, then R2, then encoded now (and stored, unless
+   * an image it needs could not be fetched).
+   */
+  function getPrefix(env, ctx, scenario, params, assets) {
     const pkey = scenario.prefix.key(params)
     const id = `${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${pkey}`
     let entry = prefixes.get(id)
@@ -146,7 +150,12 @@ export function createHandler(options) {
         const bytes = new Uint8Array(await obj.arrayBuffer())
         return { bytes, frames: scenario.prefix.frames, ...readPrefix(bytes), source: 'r2' }
       }
-      const built = await getEngine().prefix(scenario, params)
+      const a = await assets
+      const built = await getEngine().prefix(scenario, params, { assets: a })
+      if (a.missing.length) {
+        prefixes.delete(id)
+        return { ...built, source: 'built' }
+      }
       if (R2) ctx.waitUntil(env[R2].put(r2Key, built.bytes, { httpMetadata: { contentType: 'video/mp4' } }))
       return { ...built, source: 'built' }
     })()
@@ -215,9 +224,12 @@ export function createHandler(options) {
     }
     let hit = await timed('edge', edgeLookup(key, 'mp4'))
     let prefixPromise = null
+    let assets = null
     if (!hit) {
-      // On an R2 miss the prefix is needed next, so fetch both at once.
-      prefixPromise = getPrefix(env, ctx, scenario, input.params)
+      // On an R2 miss the prefix (and any images) are needed next, so fetch them all at once.
+      assets = getEngine().assets(scenario, input.params)
+      assets.catch(() => {})
+      prefixPromise = getPrefix(env, ctx, scenario, input.params, assets)
       prefixPromise.catch(() => {})
       hit = await timed('r2', r2Lookup(env, key, 'mp4'))
     }
@@ -238,13 +250,17 @@ export function createHandler(options) {
     const eng = getEngine()
     const prefix = await timed('prefix', prefixPromise)
     ev.prefix = prefix.source
+    const a = await assets
+    // A render missing an image is served but never stored; the next request tries again.
+    const complete = a.missing.length === 0
+    if (!complete) ev.missingImages = a.missing.length
     const headers = mediaHeaders(scenario, 'video/mp4', input, 'miss', { 'server-timing': [...timing, `prefix-source;desc=${prefix.source}`].join(', ') })
 
     if (wantsRange) {
       // Safari probes with `bytes=0-1`, needs the total size, then fetches ranges: render the
       // whole file (every frame, so the bytes match any other render), store it, slice it.
-      const bytes = await eng.file(scenario, input.params, prefix)
-      ctx.waitUntil(store(env, key, 'mp4', bytes, 'video/mp4').catch(() => {}))
+      const bytes = await eng.file(scenario, input.params, prefix, { assets: a })
+      if (complete) ctx.waitUntil(store(env, key, 'mp4', bytes, 'video/mp4').catch(() => {}))
       ev.bytes = bytes.length
       return sliceResponse(bytes, request, headers)
     }
@@ -271,6 +287,7 @@ export function createHandler(options) {
           return step
         },
         yieldToNetwork,
+        assets: a,
       }))
       .then(async (r) => {
         await writer.close()
@@ -279,7 +296,7 @@ export function createHandler(options) {
         const bytes = concat(parts)
         ev.bytes = bytes.length
         // A degraded render skipped frames; never store it, the next request renders in full.
-        if (!degraded) await store(env, key, 'mp4', bytes, 'video/mp4')
+        if (!degraded && complete) await store(env, key, 'mp4', bytes, 'video/mp4')
       })
       .catch(async (error) => {
         ev.error = String(error?.message ?? error)
@@ -298,8 +315,9 @@ export function createHandler(options) {
     const headers = mediaHeaders(scenario, 'image/png', input, ev.cache)
     if (hit) return sliceResponse(await hit.bytes(), request, headers)
     if (await limited(request, env)) throw new HttpError(429, 'too many renders from this address; try again in a minute')
-    const png = await getEngine().poster(scenario, input.params)
-    ctx.waitUntil(store(env, key, 'png', png, 'image/png').catch(() => {}))
+    const a = await getEngine().assets(scenario, input.params)
+    const png = await getEngine().poster(scenario, input.params, undefined, { assets: a })
+    if (!a.missing.length) ctx.waitUntil(store(env, key, 'png', png, 'image/png').catch(() => {}))
     ev.bytes = png.length
     return sliceResponse(png, request, headers)
   }
