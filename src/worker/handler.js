@@ -48,7 +48,7 @@ class HttpError extends Error {
 
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-expose-headers': 'content-length, content-range, server-timing, x-sogv-cache, x-sogv-id, x-sogv-duration, x-sogv-codec, x-sogv-fps, x-sogv-render-ms',
+  'access-control-expose-headers': 'content-length, content-range, server-timing, x-sogv-cache, x-sogv-id, x-sogv-duration, x-sogv-codec, x-sogv-fps, x-sogv-frames',
 }
 
 /** Link unfurlers and crawlers: they read og:video (always H.264) and must never get AV1. */
@@ -283,12 +283,11 @@ export function createHandler(options) {
     if (wantsRange) {
       // Safari probes with `bytes=0-1`, needs the total size, then fetches ranges: render the
       // whole file (every frame, so the bytes match any other render), store it, slice it.
-      const t0 = Date.now()
-      // Yielding per frame lets other requests in this isolate through, and Date.now() advance.
+      // Yielding per frame lets other requests in this isolate through meanwhile.
       const bytes = await eng.file(scenario, input.params, prefix, { assets: a, yieldToNetwork })
       if (complete) ctx.waitUntil(store(env, key, 'mp4', bytes, 'video/mp4').catch(() => {}))
       ev.bytes = bytes.length
-      return sliceResponse(bytes, request, { ...headers, 'x-sogv-render-ms': String(Date.now() - t0) })
+      return sliceResponse(bytes, request, headers)
     }
 
     const { readable, writable } = new TransformStream()
@@ -337,11 +336,8 @@ export function createHandler(options) {
   /** Renders the AV1 file and stores it with its stats (R2 metadata, edge headers). */
   async function renderAv1(env, scenario, input, key, a) {
     a ??= await getEngine().assets(scenario, input.params)
-    const t0 = Date.now()
     const r = await getEngine().av1(scenario, input.params, { ...av1, fps: av1Fps(scenario), assets: a, yieldToNetwork })
-    // Date.now() only advances across I/O in Workers: yield once so it covers the render.
-    await yieldToNetwork()
-    const meta = { codec: r.codec, fps: String(r.fps), encoded: String(r.encoded), renderMs: String(Date.now() - t0) }
+    const meta = { codec: r.codec, fps: String(r.fps), frames: String(r.encoded) }
     if (!a.missing.length)
       await Promise.all([
         R2 && env[R2].put(`renders/${key}.mp4`, r.bytes, { httpMetadata: { contentType: 'video/mp4' }, customMetadata: meta }),
@@ -353,7 +349,7 @@ export function createHandler(options) {
   const av1Headers = (meta) => ({
     'x-sogv-codec': meta.codec,
     'x-sogv-fps': meta.fps,
-    ...(meta.renderMs ? { 'x-sogv-render-ms': meta.renderMs } : {}),
+    ...(meta.frames ? { 'x-sogv-frames': meta.frames } : {}),
   })
 
   async function videoAv1(request, env, ctx, scenario, input, ev) {
@@ -373,7 +369,7 @@ export function createHandler(options) {
     const edge = o.edgeCache && (await caches.default.match(cacheUrl(key, 'mp4')))
     if (edge) {
       ev.cache = 'edge'
-      const meta = { codec: edge.headers.get('x-sogv-codec'), fps: edge.headers.get('x-sogv-fps'), renderMs: edge.headers.get('x-sogv-render-ms') }
+      const meta = { codec: edge.headers.get('x-sogv-codec'), fps: edge.headers.get('x-sogv-fps'), frames: edge.headers.get('x-sogv-frames') }
       return sliceResponse(new Uint8Array(await edge.arrayBuffer()), request, headers('edge', meta))
     }
     const obj = R2 && (await env[R2].get(`renders/${key}.mp4`))
