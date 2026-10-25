@@ -31,6 +31,10 @@ export interface Assets {
 }
 
 export interface Engine {
+  /** Output pixels per scenario pixel. */
+  readonly scale: number
+  /** The output size of a scenario's videos and posters at this engine's scale. */
+  size(scenario: Scenario): { width: number; height: number }
   exclusive<T>(job: (instances: { compositor: any; encoder: any }) => Promise<T>): Promise<T>
   frameStep(): number
   readonly queued: number
@@ -43,13 +47,16 @@ export interface Engine {
   frames(scenario: Scenario, params: any, onFrame: (i: number, rgba: Uint8Array) => void | Promise<void>, opts?: { from?: number; to?: number; assets?: Assets }): Promise<number>
 }
 
-export function createNodeEngine(options?: { tailsAtFullRate?: number; images?: ImageOptions }): Promise<Engine>
+export function createNodeEngine(options?: { tailsAtFullRate?: number; images?: ImageOptions; scale?: number }): Promise<Engine>
 export function createEngine(options: {
   modules: { ogfx: WebAssembly.Module; x264: WebAssembly.Module }
   fonts: Record<string, FontSource>
   tailsAtFullRate?: number
   images?: ImageOptions
+  scale?: number
 }): Engine
 export function parseParams<P>(scenario: Scenario<P>, raw?: unknown): Promise<P>
 export function concat(parts: Uint8Array[]): Uint8Array
 export const ENGINE_VERSION: string
+/** Output pixels per scene pixel unless an engine says otherwise: 0.8, so 1200x630 scenes render at 960x504. */
+export const DEFAULT_SCALE: number

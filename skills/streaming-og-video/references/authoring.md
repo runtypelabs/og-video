@@ -7,7 +7,7 @@ import { defineScenario, p, rrect } from 'streaming-og-video'
 export const hello = defineScenario({
   id: 'hello',                       // URL: /hello.mp4
   version: 1,                        // bump to invalidate cached renders
-  video: { width: 1200, height: 630, fps: 30, frames: 150 },
+  video: { width: 1200, height: 630, fps: 30, frames: 150 }, // layout units; renders at 960x504
   params: p.object({
     title: p.string({ max: 80, default: 'Hello' }),
     accent: p.color({ default: '#3b82f6' }),
@@ -111,7 +111,7 @@ Bodies at rest fall asleep: they are exactly still and act as static until somet
 - **Blend modes:** `normal`, `add`, `screen`, `multiply`, `overlay`.
 - **Masks:** `mask: sprite` gates by the sprite's alpha. `mask: { sprite, transform, mode: 'luma', invert: true }` places it, uses its luminance, or inverts it. Move the mask's transform to make wipes, reveals and image-in-type mattes.
 
-Costs at 1200x630 (local wasm SIMD):
+Costs for one 1200x630 frame (local wasm SIMD). Frames render at 960x504 by default, about two thirds of the pixels:
 | Operation | Cost |
 |---|---|
 | Full-frame blend | 0.4 ms |

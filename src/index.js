@@ -6,4 +6,4 @@ export { rgb, rrect, rect, ellipse, transform, bounds, stateKey, multiply, pose,
 export { createWorld } from './physics.js'
 export { lu } from './text.js'
 export { pixelText } from './pixelfont.js'
-export { ENGINE_VERSION } from './engine/engine.js'
+export { ENGINE_VERSION, DEFAULT_SCALE } from './engine/engine.js'

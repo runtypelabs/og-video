@@ -7,7 +7,7 @@
 // compute, so queue depth is the load signal: with k renders queued or running, live tails render
 // every ceil(k / tailsAtFullRate)-th frame. A burst gets choppier animation, never a stall.
 import * as fontkit from 'fontkit'
-import { createCompositor, createRun } from '../gfx.js'
+import { createCompositor, createRun, scaledSize } from '../gfx.js'
 import { createTextEngine } from '../text.js'
 import { createEncoder } from './x264.js'
 import { buildPrefix, streamTail, encodeFrames, codecString } from './encode.js'
@@ -16,7 +16,14 @@ import { createImageLoader } from './images.js'
 import { imageUrls } from '../schema.js'
 
 /** Bump whenever the bytes a render produces change: cache keys include it. */
-export const ENGINE_VERSION = '3'
+export const ENGINE_VERSION = '4'
+
+/**
+ * Output pixels per scene pixel. Scenes lay out on their declared size (1200x630 by default) and
+ * render natively at 0.8 of it (960x504): about a third less CPU and a quarter fewer bytes, with
+ * text and edges no softer than a 1200x630 frame shown at preview size.
+ */
+export const DEFAULT_SCALE = 0.8
 
 /** Fonts every scenario gets unless it overrides the name. */
 export const DEFAULT_FONTS = { regular: 'inter-regular', semibold: 'inter-semibold' }
@@ -27,10 +34,13 @@ export const DEFAULT_FONTS = { regular: 'inter-regular', semibold: 'inter-semibo
  *   fonts: Record<string, ArrayBuffer | Uint8Array | (() => ArrayBuffer | Uint8Array | Promise<ArrayBuffer | Uint8Array>)>,
  *   tailsAtFullRate?: number,
  *   images?: import('./images.js').ImageLoaderOptions,
+ *   scale?: number,
  * }} options `fonts` resolves the built-in font names (inter-regular, inter-semibold).
  *   `images` configures fetching image params (fetch, allow, maxBytes, maxImages, cacheBytes).
+ *   `scale` renders every scenario at about that fraction of its size, composited natively
+ *   (default DEFAULT_SCALE, 0.8: 1200x630 -> 960x504; 1 renders at the declared size).
  */
-export function createEngine({ modules, fonts: builtins, tailsAtFullRate = 3, images: imageOptions }) {
+export function createEngine({ modules, fonts: builtins, tailsAtFullRate = 3, images: imageOptions, scale = DEFAULT_SCALE }) {
   const loader = createImageLoader(imageOptions)
   let instances = null
   let chain = Promise.resolve()
@@ -88,7 +98,7 @@ export function createEngine({ modules, fonts: builtins, tailsAtFullRate = 3, im
   const assets = (scenario, params) => loader.load([...imageUrls(scenario.params, params), ...(scenario.images?.(params) ?? [])])
 
   const run = async (scenario, params, compositor, a) =>
-    createRun(compositor, await text(scenario), scenario.video, (ctx) => scenario.setup(ctx, params), { images: a.images, decoded: loader.decoded })
+    createRun(compositor, await text(scenario), scenario.video, (ctx) => scenario.setup(ctx, params), { images: a.images, decoded: loader.decoded }, scale)
 
   const withRun = async (scenario, params, fn, a) => {
     a ??= await assets(scenario, params)
@@ -103,6 +113,12 @@ export function createEngine({ modules, fonts: builtins, tailsAtFullRate = 3, im
   }
 
   return {
+    scale,
+    /** The output size of a scenario's videos and posters at this engine's scale. */
+    size: (scenario) => {
+      const { width, height } = scaledSize(scenario.video, scale)
+      return { width, height }
+    },
     exclusive,
     frameStep,
     get queued() {

@@ -23,4 +23,4 @@ export async function createNodeEngine(options = {}) {
 /** Validates raw params against a scenario's schema (defaults applied). */
 export const parseParams = (scenario, raw = {}) => validate(scenario.params, raw)
 
-export { createEngine, ENGINE_VERSION, concat } from '../engine/engine.js'
+export { createEngine, ENGINE_VERSION, DEFAULT_SCALE, concat } from '../engine/engine.js'

@@ -144,21 +144,51 @@ export async function createCompositor(module) {
 }
 
 /**
+ * The output size of a `width` x `height` scene rendered at about `scale`, and the exact scale
+ * used: the width is rounded to a multiple of 16 and the height to an even number, as the
+ * encoder needs. 1200x630 at 0.8 is exactly 960x504.
+ */
+export function scaledSize({ width, height }, scale = 1) {
+  const w = Math.max(16, Math.round((width * scale) / 16) * 16)
+  const k = w / width
+  return { width: w, height: Math.max(2, Math.round((height * k) / 2) * 2), k }
+}
+
+/**
  * Prepares one render: runs the scene's setup and returns the frame-by-frame interface the
  * encoder drives.
+ *
+ * With `scale` below 1 the frame is composited natively at the smaller size: scenes keep drawing
+ * in the scenario's coordinates (ctx.width and g.width stay the scenario's), and every coordinate,
+ * radius and blur is scaled on its way into the compositor. That is cheaper than compositing at
+ * full size and resampling, and sharper, since outlines are rasterized at the output resolution.
  * @param {{ x: any, grid: any }} compositor
  * @param {any} text from createTextEngine
  * @param {{ width: number, height: number, fps: number, frames: number }} video
  * @param {(ctx: any) => any} setup
  * @param {{ images?: Map<string, Uint8Array | null>, decoded?: { get(k: string): any, set(k: string, v: any): void } }} [assets]
  *   Fetched image bytes by URL (null when the fetch failed) and a cache of decoded sprites.
+ * @param {number} [scale] output pixels per scene pixel
  */
-export function createRun(compositor, text, video, setup, assets = {}) {
+export function createRun(compositor, text, video, setup, assets = {}, scale = 1) {
   const { x } = compositor
-  const { width: W, height: H, fps } = video
+  const { fps } = video
+  const { width: W, height: H, k } = scaledSize(video, scale)
   if (x.init(W, H) !== 0) throw new Error(`unsupported frame size ${W}x${H}: the width must be a multiple of 16 and the height even`)
   x.reset()
   const missing = new Set()
+  // Scene coordinates -> output pixels. A transform t maps scene to scene, so the compositor gets
+  // S t S^-1: the same linear part, the translation scaled.
+  const sc = (v) => v * k
+  const scaleT = (t) => (k === 1 ? t : [t[0], t[1], t[2], t[3], t[4] * k, t[5] * k])
+  // A sprite moved by whole scene pixels is a plain copy at scale 1. Keep it one (sharp, cheap
+  // and unchanged blocks stay unchanged) by moving it by whole output pixels too; fractional
+  // moves are animation and stay sub-pixel.
+  const snapT = (t) =>
+    k !== 1 && t[0] === 1 && t[1] === 0 && t[2] === 0 && t[3] === 1 && Number.isInteger(t[4]) && Number.isInteger(t[5])
+      ? [1, 0, 0, 1, Math.round(t[4] * k), Math.round(t[5] * k)]
+      : scaleT(t)
+  const scaleCmds = (cmds) => (k === 1 ? cmds : transform(cmds, k))
 
   /** Copies `data` into wasm memory for the duration of `fn(ptr)`. */
   const withBytes = (data, fn) => {
@@ -173,12 +203,17 @@ export function createRun(compositor, text, video, setup, assets = {}) {
 
   const path = (cmds) => {
     if (!cmds.length) return null
+    cmds = scaleCmds(cmds)
     const id = withBytes(new Float32Array(cmds), (p) => x.path_new(p, cmds.length))
     return id < 0 ? null : { id }
   }
 
-  const spriteOf = (id) => ({ id, x: x.sprite_x(id), y: x.sprite_y(id), w: x.sprite_w(id), h: x.sprite_h(id) })
-  const pixels = (sp) => new Uint8Array(x.memory.buffer, x.sprite_ptr(sp.id), sp.w * sp.h * 4)
+  // x, y, w, h are in scene coordinates (what scenes lay out with); px is the sprite's pixel box.
+  const spriteOf = (id) => {
+    const px = { x: x.sprite_x(id), y: x.sprite_y(id), w: x.sprite_w(id), h: x.sprite_h(id) }
+    return k === 1 ? { id, ...px, px } : { id, x: px.x / k, y: px.y / k, w: px.w / k, h: px.h / k, px }
+  }
+  const pixels = (sp) => new Uint8Array(x.memory.buffer, x.sprite_ptr(sp.id), sp.px.w * sp.px.h * 4)
 
   // The argument block shared by draw_ex / fill_ex / sprite_fill_ex (layout in crates/ogfx).
   // Views on wasm memory go stale when it grows, so it is re-viewed per call.
@@ -203,7 +238,7 @@ export function createRun(compositor, text, video, setup, assets = {}) {
     a[14] = m.sprite.id
     a[15] = m.mode === 'luma' ? 1 : 0
     a[16] = m.invert ? 1 : 0
-    if (m.transform) a.set(m.transform, 17)
+    if (m.transform) a.set(scaleT(m.transform), 17)
   }
   /** Writes a solid colour or gradient (see linear, radial) at args[3] and args[24..]. */
   const setPaint = (a, paint) => {
@@ -211,10 +246,10 @@ export function createRun(compositor, text, video, setup, assets = {}) {
       const stops = paint.stops.slice(0, 13)
       if (paint.type === 'linear') {
         a[24] = 1
-        a.set([...paint.from, ...paint.to], 25)
+        a.set([...paint.from, ...paint.to].map(sc), 25)
       } else {
         a[24] = 2
-        a.set([...paint.center, paint.radius], 25)
+        a.set([...paint.center, paint.radius].map(sc), 25)
       }
       a[29] = stops.length
       stops.forEach(([offset, color, alpha = 1], i) => {
@@ -230,7 +265,7 @@ export function createRun(compositor, text, video, setup, assets = {}) {
     if (!layers.length) return null
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
     for (const l of layers) {
-      const b = bounds(l.cmds)
+      const b = bounds(scaleCmds(l.cmds))
       x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0); x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1)
     }
     const sx = Math.floor(x0) - margin, sy = Math.floor(y0) - margin
@@ -251,10 +286,19 @@ export function createRun(compositor, text, video, setup, assets = {}) {
     return spriteOf(id)
   }
 
-  /** A sprite whose premultiplied RGBA pixels the caller writes. */
+  /** A sprite whose premultiplied RGBA pixels the caller writes (at scene resolution). */
   const bitmap = (bx, by, bw, bh, paint) => {
-    const id = x.sprite_new(bx, by, bw, bh)
-    paint(new Uint8Array(x.memory.buffer, x.sprite_ptr(id), bw * bh * 4), bw, bh)
+    if (k === 1) {
+      const id = x.sprite_new(bx, by, bw, bh)
+      paint(new Uint8Array(x.memory.buffer, x.sprite_ptr(id), bw * bh * 4), bw, bh)
+      return spriteOf(id)
+    }
+    const src = new Uint8Array(bw * bh * 4)
+    paint(src, bw, bh)
+    const sx = Math.round(bx * k), sy = Math.round(by * k)
+    const sw = Math.max(1, Math.round((bx + bw) * k) - sx), sh = Math.max(1, Math.round((by + bh) * k) - sy)
+    const id = x.sprite_new(sx, sy, sw, sh)
+    resample(src, bw, bh, new Uint8Array(x.memory.buffer, x.sprite_ptr(id), sw * sh * 4), sw, sh)
     return spriteOf(id)
   }
 
@@ -267,7 +311,7 @@ export function createRun(compositor, text, video, setup, assets = {}) {
 
   /** A drop shadow or glow for `sp`: its alpha, grown by `spread`, blurred, in `color`. */
   const shadow = (sp, { blur = 12, color = '#000000', opacity = 0.35, spread = 0 } = {}) =>
-    sp ? spriteOf(x.sprite_shadow(sp.id, blur, rgb(color), opacity, spread)) : null
+    sp ? spriteOf(x.sprite_shadow(sp.id, blur * k, rgb(color), opacity, spread * k)) : null
 
   /**
    * An image param, decoded and fitted into the box (x, y, w, h): `cover` crops to fill it,
@@ -282,10 +326,14 @@ export function createRun(compositor, text, video, setup, assets = {}) {
       missing.add(src)
       return null
     }
-    const key = `${src}|${bx},${by},${w},${h}|${fit}|${position}|${radius}`
+    const key = `${src}|${bx},${by},${w},${h}|${fit}|${position}|${radius}|${k}`
     const hit = assets.decoded?.get(key)
-    if (hit) return bitmap(hit.x, hit.y, hit.w, hit.h, (px) => px.set(hit.px))
-    const rc = withBytes(bytes, (p) => x.image_decode(p, bytes.byteLength, Math.ceil(w), Math.ceil(h)))
+    if (hit) {
+      const id = x.sprite_new(hit.x, hit.y, hit.w, hit.h)
+      new Uint8Array(x.memory.buffer, x.sprite_ptr(id), hit.w * hit.h * 4).set(hit.px)
+      return spriteOf(id)
+    }
+    const rc = withBytes(bytes, (p) => x.image_decode(p, bytes.byteLength, Math.ceil(w * k), Math.ceil(h * k)))
     if (rc < 0) {
       missing.add(src)
       return null
@@ -303,13 +351,14 @@ export function createRun(compositor, text, video, setup, assets = {}) {
       const dw = iw * k, dh = ih * k
       box = [bx + (w - dw) * position[0], by + (h - dh) * position[1], dw, dh]
     }
+    box = box.map(sc)
     const sx = Math.round(box[0]), sy = Math.round(box[1])
     const sw = Math.max(1, Math.round(box[0] + box[2]) - sx), sh = Math.max(1, Math.round(box[1] + box[3]) - sy)
     const id = x.sprite_new(sx, sy, sw, sh)
     x.image_to_sprite(id, ...crop)
     x.image_free()
     const sp = spriteOf(id)
-    if (radius > 0) clip(sp, rrect(sx, sy, sw, sh, radius))
+    if (radius > 0) clip(sp, rrect(sx / k, sy / k, sw / k, sh / k, radius))
     assets.decoded?.set(key, { x: sx, y: sy, w: sw, h: sh, px: pixels(sp).slice() })
     return sp
   }
@@ -335,14 +384,15 @@ export function createRun(compositor, text, video, setup, assets = {}) {
         const x0 = bx + c * pitch + half, y0 = by + r * pitch + half
         // Average the footprint of the dot in the source.
         let sr = 0, sg = 0, sb = 0, sa = 0, n = 0
+        // In output pixels: the footprint's rows and columns at this scale.
         for (let yy = y0; yy < y0 + size; yy++) {
-          const ly = yy - sp.y
-          if (ly < 0 || ly >= sp.h) { n += size; continue }
+          const ly = Math.floor((yy + 0.5) * k) - sp.px.y
+          if (ly < 0 || ly >= sp.px.h) { n += size; continue }
           for (let xx = x0; xx < x0 + size; xx++) {
             n++
-            const lx = xx - sp.x
-            if (lx < 0 || lx >= sp.w) continue
-            const o = (ly * sp.w + lx) * 4
+            const lx = Math.floor((xx + 0.5) * k) - sp.px.x
+            if (lx < 0 || lx >= sp.px.w) continue
+            const o = (ly * sp.px.w + lx) * 4
             sr += px[o]; sg += px[o + 1]; sb += px[o + 2]; sa += px[o + 3]
           }
         }
@@ -352,11 +402,11 @@ export function createRun(compositor, text, video, setup, assets = {}) {
         const color = sa > 0 ? (Math.round((sr / sa) * 255) << 16) | (Math.round((sg / sa) * 255) << 8) | Math.round((sb / sa) * 255) : 0xffffff
         const dot = { x: x0, y: y0, u: (c + 0.5) / cols, v: (r + 0.5) / rows, value, color }
         const t = order ? order(dot, rnd) : rnd
-        out.push(x0, y0, value, Math.max(0, Math.min(1, t)), color)
+        out.push(x0 * k, y0 * k, value, Math.max(0, Math.min(1, t)), color)
       }
     }
     if (!out.length) return null
-    const id = withBytes(new Float32Array(out), (p) => x.dots_new(p, out.length / 5, size, round ? 1 : 0))
+    const id = withBytes(new Float32Array(out), (p) => x.dots_new(p, out.length / 5, size * k, round ? 1 : 0))
     return { id, count: out.length / 5 }
   }
 
@@ -368,13 +418,14 @@ export function createRun(compositor, text, video, setup, assets = {}) {
   const grid = (spec) => {
     const g = compositor.grid
     const ensure = () => {
-      if (g.key === spec.key && x.grid_ready()) return
+      if (g.key === `${spec.key}@${k}` && x.grid_ready()) return
       const p = path(spec.cells)
-      const [a, b, c, d, e, f] = spec.transform
-      const [cx, cy] = spec.center
-      const { x: ox, y: oy, w, h } = spec.canvas
+      const [a, b, c, d, e, f] = scaleT(spec.transform)
+      const [cx, cy] = spec.center.map(sc)
+      const ox = Math.round(spec.canvas.x * k), oy = Math.round(spec.canvas.y * k)
+      const w = Math.round((spec.canvas.x + spec.canvas.w) * k) - ox, h = Math.round((spec.canvas.y + spec.canvas.h) * k) - oy
       x.grid_setup(p.id, ox, oy, w, h, cx, cy, a, b, c, d, e, f, spec.background ?? 17, spec.cell ?? 31)
-      g.key = spec.key
+      g.key = `${spec.key}@${k}`
       g.bakedR = -1
     }
     return { ensure, spec }
@@ -406,8 +457,8 @@ export function createRun(compositor, text, video, setup, assets = {}) {
 
   /** @type {import('../types/index.js').Frame} */
   const g = {
-    width: W,
-    height: H,
+    width: video.width,
+    height: video.height,
     clear(color) {
       if (!inLayer) {
         if (overlay || idx > 0) throw new Error('g.clear() outside a layer must come first')
@@ -440,7 +491,7 @@ export function createRun(compositor, text, video, setup, assets = {}) {
       if (!p || alpha <= 0) return
       beforeDraw()
       if (typeof color !== 'object' && !c && !mask && !blend && !evenodd) {
-        const [a, b, cc, d, e, f] = t ?? [1, 0, 0, 1, 0, 0]
+        const [a, b, cc, d, e, f] = t ? scaleT(t) : [1, 0, 0, 1, 0, 0]
         x.fill(p.id, rgb(color), alpha, a, b, cc, d, e, f)
         return
       }
@@ -450,8 +501,8 @@ export function createRun(compositor, text, video, setup, assets = {}) {
       a[2] = blendCode(blend)
       a[23] = evenodd ? 1 : 0
       setPaint(a, color)
-      if (c) a.set(c, 4)
-      if (t) a.set(t, 8)
+      if (c) a.set(c.map(sc), 4)
+      if (t) a.set(scaleT(t), 8)
       setMask(a, mask)
       x.fill_ex()
     },
@@ -461,10 +512,10 @@ export function createRun(compositor, text, video, setup, assets = {}) {
       const a = args()
       a[0] = s.id
       a[1] = opacity
-      a[2] = blur
+      a[2] = blur * k
       a[3] = blendCode(blend)
-      if (c) a.set(c, 4)
-      if (t) a.set(t, 8)
+      if (c) a.set(c.map(sc), 4)
+      if (t) a.set(snapT(t), 8)
       setMask(a, mask)
       x.draw_ex()
     },
@@ -481,19 +532,20 @@ export function createRun(compositor, text, video, setup, assets = {}) {
         return
       }
       effect.ensure()
-      if (scale === 1 && tx === 0 && ty === 0) x.grid_reveal(radius, opacity)
+      const r = radius * k
+      if (scale === 1 && tx === 0 && ty === 0) x.grid_reveal(r, opacity)
       else {
         const gs = compositor.grid
-        if (gs.bakedR !== radius) {
-          x.grid_bake(radius)
-          gs.bakedR = radius
+        if (gs.bakedR !== r) {
+          x.grid_bake(r)
+          gs.bakedR = r
         }
-        x.grid_scaled(scale, tx, ty, opacity)
+        x.grid_scaled(scale, tx * k, ty * k, opacity)
       }
     },
   }
 
-  const ctx = { width: W, height: H, fps, frames: video.frames, text, path, sprite, bitmap, grid, clip, shadow, image, dots, mask: (cmds, o) => sprite([{ cmds, color: 0xffffff, evenodd: o?.evenodd }], o) }
+  const ctx = { width: video.width, height: video.height, fps, frames: video.frames, text, path, sprite, bitmap, grid, clip, shadow, image, dots, mask: (cmds, o) => sprite([{ cmds, color: 0xffffff, evenodd: o?.evenodd }], o) }
   const scene = setup(ctx)
   const frames = video.frames
   let lastKey = null
@@ -550,5 +602,31 @@ function mulberry(seed) {
     let t = Math.imul(h ^ (h >>> 15), 1 | h)
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/**
+ * Area-averaging resample of premultiplied RGBA (src sw x sh into dst dw x dh), for bitmaps
+ * painted at scene resolution and drawn at a smaller output scale.
+ */
+function resample(src, sw, sh, dst, dw, dh) {
+  const fx = sw / dw, fy = sh / dh
+  for (let y = 0; y < dh; y++) {
+    const y0 = y * fy, y1 = y0 + fy
+    for (let x = 0; x < dw; x++) {
+      const x0 = x * fx, x1 = x0 + fx
+      let r = 0, g = 0, b = 0, a = 0, wsum = 0
+      for (let sy = Math.floor(y0); sy < Math.min(sh, Math.ceil(y1)); sy++) {
+        const wy = Math.min(y1, sy + 1) - Math.max(y0, sy)
+        for (let sx = Math.floor(x0); sx < Math.min(sw, Math.ceil(x1)); sx++) {
+          const w = wy * (Math.min(x1, sx + 1) - Math.max(x0, sx))
+          const o = (sy * sw + sx) * 4
+          r += src[o] * w; g += src[o + 1] * w; b += src[o + 2] * w; a += src[o + 3] * w
+          wsum += w
+        }
+      }
+      const o = (y * dw + x) * 4
+      dst[o] = Math.round(r / wsum); dst[o + 1] = Math.round(g / wsum); dst[o + 2] = Math.round(b / wsum); dst[o + 3] = Math.round(a / wsum)
+    }
   }
 }
