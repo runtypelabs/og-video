@@ -115,6 +115,8 @@ static void check_mc( void )
         }
         mc.mc_luma( buf1, dst, srcs, sst, mvx, mvy, bw, bh, &wt ); ms.mc_luma( buf2, dst, srcs, sst, mvx, mvy, bw, bh, &wt );
         if( memcmp( buf1, buf2, sizeof(buf1) ) ) FAIL( "mc_luma %dx%d mv %d,%d w=%d\n", bw, bh, mvx, mvy, !!wt.weightfn );
+        /* Same sentinel in both, so a get_ref that skips its writes cannot pass on mc_luma's output. */
+        memset( buf1, 0xa5, sizeof(buf1) ); memset( buf2, 0xa5, sizeof(buf2) );
         intptr_t st1 = dst, st2 = dst;
         pixel *r1 = mc.get_ref( buf1, &st1, srcs, sst, mvx, mvy, bw, bh, &wt );
         pixel *r2 = ms.get_ref( buf2, &st2, srcs, sst, mvx, mvy, bw, bh, &wt );
@@ -224,18 +226,74 @@ static void check_quant( void )
     }
 }
 
+/* The scans read exactly n coefficients, as the C does: put the last one at the very end of wasm
+ * memory, where any read past it traps. */
+static void check_scan_bounds( void )
+{
+    size_t end = __builtin_wasm_memory_size( 0 ) * 65536;
+    for( int it = 0; it < 2000; it++ )
+    {
+        static const int nn[4] = { 4, 8, 15, 16 };
+        for( int k = 0; k < 4; k++ )
+        {
+            dctcoef *blk = (dctcoef *)( end - nn[k] * sizeof(dctcoef) );
+            fill_coefs( blk, nn[k], it );
+            blk[nn[k] - 1] |= it & 1; /* nonzero last coefficient half the time */
+            x264_run_level_t rl;
+            int last = k == 0 ? qs.coeff_last4( blk ) : k == 1 ? qs.coeff_last8( blk ) : k == 2 ? qs.coeff_last[DCT_LUMA_AC]( blk ) : qs.coeff_last[DCT_LUMA_4x4]( blk );
+            if( last >= 0 )
+            {
+                if( k == 0 ) qs.coeff_level_run4( blk, &rl );
+                else if( k == 1 ) qs.coeff_level_run8( blk, &rl );
+                else qs.coeff_level_run[k == 2 ? DCT_LUMA_AC : DCT_LUMA_4x4]( blk, &rl );
+            }
+            if( k == 3 )
+            {
+                qs.decimate_score16( blk );
+                qs.decimate_score15( blk ); /* reads blk[1..15] */
+            }
+        }
+    }
+}
+
 int main( void )
 {
     static x264_t h;
+    /* A fresh page past everything else in memory, for check_scan_bounds. */
+    if( __builtin_wasm_memory_grow( 0, 1 ) < 0 ) { printf( "memory.grow failed\n" ); return 2; }
     x264_wasm_simd_off = 1;
     x264_pixel_init( 0, &pc ); x264_mc_init( 0, &mc, 0 ); x264_dct_init( 0, &dc ); x264_quant_init( &h, 0, &qc );
     x264_wasm_simd_off = 0;
     x264_pixel_init( 0, &ps ); x264_mc_init( 0, &ms, 0 ); x264_dct_init( 0, &ds ); x264_quant_init( &h, 0, &qs );
-    if( pc.sad[PIXEL_16x16] == ps.sad[PIXEL_16x16] ) { printf( "SIMD kernels not installed\n" ); return 2; }
+    /* Every replaced entry must differ from the C one, or a broken hook would compare C with C. */
+#define INSTALLED(a, b) if( (void *)(a) == (void *)(b) ) { printf( "not installed: %s\n", #b ); return 2; }
+    static const int sizes[] = { PIXEL_16x16, PIXEL_16x8, PIXEL_8x16, PIXEL_8x8, PIXEL_8x4 };
+    for( int i = 0; i < 5; i++ )
+    {
+        int s = sizes[i];
+        INSTALLED( pc.sad[s], ps.sad[s] ) INSTALLED( pc.sad_aligned[s], ps.sad_aligned[s] )
+        INSTALLED( pc.sad_x3[s], ps.sad_x3[s] ) INSTALLED( pc.sad_x4[s], ps.sad_x4[s] ) INSTALLED( mc.avg[s], ms.avg[s] )
+    }
+    INSTALLED( pc.intra_sad_x3_16x16, ps.intra_sad_x3_16x16 )
+    INSTALLED( mc.mc_luma, ms.mc_luma ) INSTALLED( mc.get_ref, ms.get_ref ) INSTALLED( mc.mc_chroma, ms.mc_chroma )
+    INSTALLED( mc.copy_16x16_unaligned, ms.copy_16x16_unaligned ) INSTALLED( mc.copy[PIXEL_16x16], ms.copy[PIXEL_16x16] )
+    INSTALLED( mc.copy[PIXEL_8x8], ms.copy[PIXEL_8x8] ) INSTALLED( mc.copy[PIXEL_4x4], ms.copy[PIXEL_4x4] )
+    INSTALLED( mc.store_interleave_chroma, ms.store_interleave_chroma )
+    INSTALLED( mc.load_deinterleave_chroma_fenc, ms.load_deinterleave_chroma_fenc )
+    INSTALLED( mc.load_deinterleave_chroma_fdec, ms.load_deinterleave_chroma_fdec )
+    INSTALLED( dc.sub4x4_dct, ds.sub4x4_dct ) INSTALLED( dc.sub8x8_dct, ds.sub8x8_dct ) INSTALLED( dc.sub16x16_dct, ds.sub16x16_dct )
+    INSTALLED( dc.add4x4_idct, ds.add4x4_idct ) INSTALLED( dc.add8x8_idct, ds.add8x8_idct ) INSTALLED( dc.add16x16_idct, ds.add16x16_idct )
+    INSTALLED( qc.quant_4x4, qs.quant_4x4 ) INSTALLED( qc.quant_4x4x4, qs.quant_4x4x4 ) INSTALLED( qc.quant_8x8, qs.quant_8x8 )
+    INSTALLED( qc.coeff_last4, qs.coeff_last4 ) INSTALLED( qc.coeff_last8, qs.coeff_last8 )
+    INSTALLED( qc.coeff_last[DCT_LUMA_AC], qs.coeff_last[DCT_LUMA_AC] ) INSTALLED( qc.coeff_last[DCT_LUMA_4x4], qs.coeff_last[DCT_LUMA_4x4] )
+    INSTALLED( qc.coeff_level_run4, qs.coeff_level_run4 ) INSTALLED( qc.coeff_level_run8, qs.coeff_level_run8 )
+    INSTALLED( qc.coeff_level_run[DCT_LUMA_AC], qs.coeff_level_run[DCT_LUMA_AC] ) INSTALLED( qc.coeff_level_run[DCT_LUMA_4x4], qs.coeff_level_run[DCT_LUMA_4x4] )
+    INSTALLED( qc.decimate_score15, qs.decimate_score15 ) INSTALLED( qc.decimate_score16, qs.decimate_score16 )
     check_pixel(); printf( "pixel done\n" );
     check_mc(); printf( "mc done\n" );
     check_dct(); printf( "dct done\n" );
     check_quant(); printf( "quant done\n" );
+    check_scan_bounds(); printf( "scan bounds done\n" );
     printf( fails ? "%d mismatches\n" : "all kernels match the C\n", fails );
     return fails ? 1 : 0;
 }
