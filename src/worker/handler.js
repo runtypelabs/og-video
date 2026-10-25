@@ -21,7 +21,7 @@ import ogfxModule from '../../wasm/ogfx.wasm'
 import x264Module from '../../wasm/x264.wasm'
 import interRegular from '../../fonts/Inter-Regular.ttf.bin'
 import interSemiBold from '../../fonts/Inter-SemiBold.ttf.bin'
-import { createEngine, ENGINE_VERSION, concat } from '../engine/engine.js'
+import { createEngine, ENGINE_VERSION, DEFAULT_SCALE, concat } from '../engine/engine.js'
 import { readPrefix } from '../engine/encode.js'
 import { validate, ParamError } from '../schema.js'
 import { rawParams, contentId, verify, sign, hash, canonical, pack } from '../params.js'
@@ -70,6 +70,7 @@ export function createHandler(options) {
       fonts: { 'inter-regular': interRegular, 'inter-semibold': interSemiBold, ...o.fonts },
       tailsAtFullRate: o.tailsAtFullRate,
       images: o.images,
+      scale: o.scale,
     }))
 
   const secretOf = (env) => {
@@ -96,7 +97,9 @@ export function createHandler(options) {
     return { params, cid: await contentId(scenario.id, params), source: 'inline' }
   }
 
-  const renderKey = (scenario, cid) => `${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${cid}`
+  // Renders at another scale are different bytes, so their cache keys say so.
+  const VERSION = o.scale != null && o.scale !== DEFAULT_SCALE ? `${ENGINE_VERSION}@${o.scale}` : ENGINE_VERSION
+  const renderKey = (scenario, cid) => `${VERSION}/${scenario.id}/${scenario.version}/${cid}`
   const cacheUrl = (key, ext) => `https://streaming-og-video.internal/${key}.${ext}`
 
   async function edgeLookup(key, ext) {
@@ -136,7 +139,7 @@ export function createHandler(options) {
    */
   function getPrefix(env, ctx, scenario, params, assets) {
     const pkey = scenario.prefix.key(params)
-    const id = `${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${pkey}`
+    const id = `${VERSION}/${scenario.id}/${scenario.version}/${pkey}`
     let entry = prefixes.get(id)
     if (entry) {
       prefixes.delete(id)
@@ -144,7 +147,7 @@ export function createHandler(options) {
       return entry.then((prefix) => ({ ...prefix, source: 'memory' }))
     }
     entry = (async () => {
-      const r2Key = `prefixes/${ENGINE_VERSION}/${scenario.id}/${scenario.version}/${await hash(pkey)}.mp4`
+      const r2Key = `prefixes/${VERSION}/${scenario.id}/${scenario.version}/${await hash(pkey)}.mp4`
       const obj = R2 && (await env[R2].get(r2Key))
       if (obj) {
         const bytes = new Uint8Array(await obj.arrayBuffer())
@@ -333,7 +336,7 @@ export function createHandler(options) {
   async function page(request, env, ctx, scenario, input) {
     const l = await links(request, env, scenario, input)
     const meta = scenario.meta(input.params) ?? {}
-    const html = (o.page ?? sharePage)({ ...l, ...meta, width: scenario.video.width, height: scenario.video.height, siteName: o.siteName, scenario, params: input.params })
+    const html = (o.page ?? sharePage)({ ...l, ...meta, ...getEngine().size(scenario), siteName: o.siteName, scenario, params: input.params })
     return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': o.cacheControl, ...CORS } })
   }
 

@@ -165,9 +165,9 @@ export interface StandardSchema<T = unknown> {
 }
 
 export interface VideoSpec {
-  /** Multiple of 16. Default 1200. */
+  /** Layout width: scenes draw in these units. Videos render at 0.8 of it (960 by default; see DEFAULT_SCALE). Multiple of 16. Default 1200. */
   width?: number
-  /** Even. Default 630. */
+  /** Layout height. Videos render at 0.8 of it (504 by default). Even. Default 630. */
   height?: number
   /** Default 30. */
   fps?: number
@@ -316,3 +316,5 @@ export function createWorld(opts?: { gravity?: number; iterations?: number; slee
 export function lu(n: number): number
 export function pixelText(text: string): { cells: [number, number][]; cols: number; text: string }
 export const ENGINE_VERSION: string
+/** Output pixels per scene pixel unless an engine says otherwise: 0.8, so 1200x630 scenes render at 960x504. */
+export const DEFAULT_SCALE: number

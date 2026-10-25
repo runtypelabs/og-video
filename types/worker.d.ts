@@ -57,6 +57,8 @@ export interface HandlerOptions {
   prefixMemory?: number
   /** Live tails rendered at full frame rate before frames are skipped under load. Default 3. */
   tailsAtFullRate?: number
+  /** Render at about this fraction of each scenario's layout size, composited natively. Default 0.8 (1200x630 -> 960x504); 1 renders at the layout size. */
+  scale?: number
   /** Extra font sources by built-in name. */
   fonts?: Record<string, FontSource>
   /** Serve every route under this prefix (e.g. '/v1') and use it in links. Default: none. */

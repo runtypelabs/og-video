@@ -9,8 +9,8 @@ Animated `og:video` link previews, rendered inside a Cloudflare Worker and strea
 ```html
 <meta property="og:video" content="https://og.video/v1/title-card.mp4?title=We%20shipped%20it&kicker=Launch&brand=acme">
 <meta property="og:video:type" content="video/mp4">
-<meta property="og:video:width" content="1200">
-<meta property="og:video:height" content="630">
+<meta property="og:video:width" content="960">
+<meta property="og:video:height" content="504">
 <meta property="og:image" content="https://og.video/v1/title-card.png?title=We%20shipped%20it&kicker=Launch&brand=acme">
 ```
 
@@ -35,7 +35,7 @@ request ──► Worker
 ```
 
 - **Starts instantly.** A scenario declares how many opening frames depend only on a few params (its *prefix*). Those frames are encoded once per prefix key, kept in R2 and isolate memory, and written before any rendering. Players start on the prefix while the rest renders.
-- **Faster than realtime.** A 7 s, 1200×630, 60 fps card renders in about 200–500 ms on a laptop and well under its playing time at the edge. The compositor rasterizes shapes once; frames whose state hasn't changed are skipped; blocks nothing touched are skipped by the encoder.
+- **Faster than realtime.** A 7 s, 960×504, 60 fps card renders in about 200–500 ms on a laptop and well under its playing time at the edge. The compositor rasterizes shapes once; frames whose state hasn't changed are skipped; blocks nothing touched are skipped by the encoder.
 - **Renders once.** The cache key is the params' content hash, the scenario version and the engine version. A render that skipped frames under load is never stored, so the cached copy is always complete.
 - **Plays on iPhones.** Byte ranges are served from the cached file, or from a full render that is byte-identical to it, which is what iOS Safari needs.
 - **Bounded.** One compositor + encoder per isolate (about 38 MB of the 128 MB limit), renders queued FIFO, and frame skipping by queue depth under bursts, because Workers have no clock to measure lag with.

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createNodeEngine, parseParams } from '../src/node/index.js'
+import { createNodeEngine, parseParams, DEFAULT_SCALE } from '../src/node/index.js'
 import { readPrefix } from '../src/engine/encode.js'
 import * as builtins from '../src/scenarios/index.js'
 import { gallery } from '../src/scenarios/index.js'
@@ -36,8 +36,7 @@ for (const scenario of scenarios) {
     const png = await engine.poster(scenario, await parseParams(scenario, {}))
     assert.deepEqual([...png.subarray(1, 4)], [80, 78, 71])
     const view = new DataView(png.buffer, png.byteOffset)
-    assert.equal(view.getUint32(16), scenario.video.width)
-    assert.equal(view.getUint32(20), scenario.video.height)
+    assert.deepEqual([view.getUint32(16), view.getUint32(20)], Object.values(engine.size(scenario)))
   })
 }
 
@@ -107,4 +106,31 @@ test('physics: two runs of the same world give identical poses', async () => {
   const b = run()
   assert.deepEqual(a.out, b.out)
   assert.ok(a.out.every(Number.isFinite))
+})
+
+test('scale: every built-in renders natively at 960x504 by default, deterministically, laid out at 1200x630', async () => {
+  const engine = await createNodeEngine()
+  assert.equal(engine.scale, DEFAULT_SCALE)
+  for (const scenario of scenarios) {
+    const params = await parseParams(scenario, {})
+    assert.deepEqual(engine.size(scenario), { width: 960, height: 504 })
+    const png = await engine.poster(scenario, params)
+    const view = new DataView(png.buffer, png.byteOffset)
+    assert.deepEqual([view.getUint32(16), view.getUint32(20)], [960, 504], scenario.id)
+    const a = await engine.file(scenario, params)
+    assert.deepEqual(Buffer.from(a), Buffer.from(await engine.file(scenario, params)), scenario.id)
+  }
+  // Scenes lay out in their own coordinates at any scale.
+  let seen
+  await engine.frames({ ...builtins.kinetic, setup: (ctx, p) => ((seen = [ctx.width, ctx.height]), builtins.kinetic.setup(ctx, p)) }, await parseParams(builtins.kinetic, {}), () => {}, { to: 1 })
+  assert.deepEqual(seen, [1200, 630])
+})
+
+test('scale: 1 renders at the layout size; other scales round to sizes the encoder takes', async () => {
+  assert.deepEqual((await createNodeEngine({ scale: 1 })).size(builtins.kinetic), { width: 1200, height: 630 })
+  const odd = await createNodeEngine({ scale: 0.7 })
+  assert.deepEqual(odd.size(builtins.kinetic), { width: 848, height: 446 })
+  const png = await odd.poster(builtins.kinetic, await parseParams(builtins.kinetic, {}))
+  const view = new DataView(png.buffer, png.byteOffset)
+  assert.deepEqual([view.getUint32(16), view.getUint32(20)], [848, 446])
 })

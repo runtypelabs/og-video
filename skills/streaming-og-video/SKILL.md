@@ -5,7 +5,7 @@ description: Build, debug, or deploy streaming-og-video: animated og:video link 
 
 # streaming-og-video
 
-streaming-og-video renders short MP4s (default 1200x630, 30 fps, 7 s) inside a Cloudflare Worker, with no browser, and streams them out faster than they play:
+streaming-og-video renders short MP4s (laid out at 1200x630 and rendered at 960x504 by default, 30 fps, 7 s) inside a Cloudflare Worker, with no browser, and streams them out faster than they play:
 - a Rust/wasm compositor draws each frame;
 - x264 (wasm) encodes it;
 - the MP4 goes out as fragments while later frames are still rendering.
