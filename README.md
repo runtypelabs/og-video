@@ -29,7 +29,7 @@ request ──► Worker
                          → Rust/wasm compositor (tiny-skia + SIMD): cached sprites and layers,
                            transformed draws, masks, blend modes, blur, dot fields, images,
                            converts to I420, flags unchanged 16×16 blocks
-                         → x264 (wasm) encodes only what changed
+                         → x264 (wasm, SIMD128 kernels) encodes only what changed
                          → moof/mdat fragment → response
                   3. store the finished file in R2 + the edge cache
 ```
@@ -168,7 +168,7 @@ src/            the library (plain ESM + JSDoc; types in types/)
   node/         Node engine and the sogv CLI
   scenarios/    built-in scenarios
 crates/ogfx/    the Rust compositor (npm run build:ogfx)
-x264/           x264 wasm build (npm run build:x264)
+x264/           x264 wasm build (npm run build:x264), with SIMD128 kernels checked against x264's C
 wasm/, fonts/   built artifacts and Inter
 ```
 
@@ -177,7 +177,7 @@ wasm/, fonts/   built artifacts and Inter
 - **Safari doesn't stream.** iOS fetches ranges, so the first view on an iPhone waits for a full render (about 0.2–0.6 s at the edge). Later views are cache hits.
 - **Bursts on a cold key.** Many concurrent requests for different new videos in one isolate share one engine. Live tails then skip frames, which looks choppy, and those renders aren't cached. A longer prefix gives more headroom.
 - **2D graphics only.** The compositor does vector fills with solid or gradient paint, sprites with any affine transform, blur, masks, blend modes, shadows, dot fields, decoded images and layers. It doesn't do footage or 3D.
-- **Full-frame motion costs encode time.** A frame where half the picture moves costs about 1–2 ms in x264 alone, so scenes that move a lot every frame (`gallery`, `falling-words`) take 0.6–0.8 s per 7 s at 60 fps locally, and `falling-words` is about 5 MB. Lower `video.fps` for scenes like that if size or render time matters more than smoothness.
+- **Full-frame motion costs encode time.** A frame where half the picture moves costs about 0.5–1 ms in x264 alone, so scenes that move a lot every frame (`gallery`, `falling-words`) take 0.3–0.5 s per 7 s at 60 fps locally, and `falling-words` is about 3.5 MB. Lower `video.fps` for scenes like that if size or render time matters more than smoothness.
 - **Image params are fetched by the Worker.** They are capped in size and count, cached per isolate, and a render missing one is served but never cached. If the image at a URL changes, cached videos keep the old one; change the URL to refresh it.
 
 ## Roadmap

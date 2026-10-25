@@ -1,0 +1,56 @@
+diff --git a/common/dct.c b/common/dct.c
+index b208e26e..e59d80a9 100644
+--- a/common/dct.c
++++ b/common/dct.c
+@@ -774,6 +774,9 @@ void x264_dct_init( uint32_t cpu, x264_dct_function_t *dctf )
+ #endif
+ 
+ #endif // HIGH_BIT_DEPTH
++#ifdef __wasm_simd128__
++    { void x264_wasm_dct_init( x264_dct_function_t * ); x264_wasm_dct_init( dctf ); }
++#endif
+ }
+ 
+ 
+diff --git a/common/mc.c b/common/mc.c
+index ae81ce4b..9d3f1024 100644
+--- a/common/mc.c
++++ b/common/mc.c
+@@ -694,6 +694,10 @@ void x264_mc_init( uint32_t cpu, x264_mc_functions_t *pf, int cpu_independent )
+     x264_mc_init_loongarch( cpu, pf );
+ #endif
+ 
++#ifdef __wasm_simd128__
++    { void x264_wasm_mc_init( x264_mc_functions_t * ); x264_wasm_mc_init( pf ); }
++#endif
++
+     if( cpu_independent )
+     {
+         pf->mbtree_propagate_cost = mbtree_propagate_cost;
+diff --git a/common/pixel.c b/common/pixel.c
+index 2f91bd33..c26806d2 100644
+--- a/common/pixel.c
++++ b/common/pixel.c
+@@ -1657,6 +1657,10 @@ void x264_pixel_init( uint32_t cpu, x264_pixel_function_t *pixf )
+     }
+ #endif
+ 
++#ifdef __wasm_simd128__
++    { void x264_wasm_pixel_init( x264_pixel_function_t * ); x264_wasm_pixel_init( pixf ); }
++#endif
++
+     pixf->ads[PIXEL_8x16] =
+     pixf->ads[PIXEL_8x4] =
+     pixf->ads[PIXEL_4x8] = pixf->ads[PIXEL_16x8];
+diff --git a/common/quant.c b/common/quant.c
+index 21bb2955..9aa946c5 100644
+--- a/common/quant.c
++++ b/common/quant.c
+@@ -885,4 +885,7 @@ void x264_quant_init( x264_t *h, uint32_t cpu, x264_quant_function_t *pf )
+     pf->coeff_level_run[DCT_CHROMAU_4x4] = pf->coeff_level_run[DCT_CHROMAV_4x4] = pf->coeff_level_run[DCT_LUMA_4x4];
+     pf->coeff_level_run[DCT_CHROMA_AC]   = pf->coeff_level_run[DCT_CHROMAU_AC]  =
+     pf->coeff_level_run[DCT_CHROMAV_AC]  = pf->coeff_level_run[DCT_LUMA_AC];
++#ifdef __wasm_simd128__
++    { void x264_wasm_quant_init( x264_quant_function_t * ); x264_wasm_quant_init( pf ); }
++#endif
+ }
