@@ -150,8 +150,14 @@ The [skill](skills/streaming-og-video/SKILL.md) covers the mental model, the ful
 | `dot-matrix` | A product card whose blue panel cycles through dot-matrix icons (search, brand, map, monitor, scrape, code, chart), each dissolving in and out dot by dot with a pixel-font label | `sogv render dot-matrix` |
 | `falling-words` | A dot and a label; about a hundred small words rain in at random angles, tumble and pile up (precomputed rigid-body physics), then drop out to loop | `sogv render falling-words` |
 | `gallery` | A title block beside a two-column wall of thumbnails that scrolls without end. Thumbnails are `images` URLs (PNG, JPEG, WebP), or built-in illustrated tiles | `sogv render gallery` |
+| `terminal` | A shell session replays: commands type out behind a block cursor, spinners resolve to a check or cross, and output prints in. `lines` mark commands with `$`, successes `+`, failures `!`, muted `>`, accent `*words*` | `sogv render terminal` |
+| `pr` | A pull request: title and state pill land, diff lines type in over red and green rows, the +/- counters tick, and a Merged (or Closed) stamp lands | `sogv render pr` |
+| `repo` | A repo or package card: the star count rolls up, the language bar fills, topic pills pop in, and an optional star history draws with milestone ticks | `sogv render repo` |
+| `transcript` | An agent run replays: user bubbles, tool calls whose spinners resolve to a check (or a red cross for `r!:` failures), typing dots, then the answer. `chat=u: … \| t: tool(args) \| r: result \| a: answer` | `sogv render transcript` |
+| `grid` | A results grid (evals, test matrices): tiles flip in a wave to pass, warn or fail with a glyph each, row tallies land, and a pass count rolls up | `sogv render grid` |
+| `race` | A bar chart race: horizontal bars swap ranks across periods as values count, the axis rescales to the leader, and a big period counter rolls over | `sogv render race` |
 
-All of them take `accent`, and `kinetic`, `metric`, `bars` and `release` also take `theme=light`. The last three are new in v2 and not yet on og.video. `GET /<scenario>.json` lists the resolved params with their defaults.
+All of them take `accent`, and `kinetic`, `metric`, `bars`, `release` and the six from `terminal` down also take `theme=light`. The last three are new in v2 and not yet on og.video. `GET /<scenario>.json` lists the resolved params with their defaults.
 
 ## Layout
 
@@ -169,7 +175,7 @@ src/            the library (plain ESM + JSDoc; types in types/)
   scenarios/    built-in scenarios
 crates/ogfx/    the Rust compositor (npm run build:ogfx)
 x264/           x264 wasm build (npm run build:x264), with SIMD128 kernels checked against x264's C
-wasm/, fonts/   built artifacts and Inter
+wasm/, fonts/   built artifacts, Inter and JetBrains Mono
 ```
 
 ## Limits
@@ -190,7 +196,6 @@ wasm/, fonts/   built artifacts and Inter
   - directional motion blur and perspective (2.5D) card warps.
 - **Footage plates:** H.264 decode in wasm for video backgrounds and pre-rendered 3D loops, behind a container step that normalises uploads (see the v2 plan).
 - **A per-frame cost check in CI:** fail when a scenario's p95 frame cost passes a budget.
-- **Fonts:** a built-in monospace face for code and terminal scenes.
 - **Bundled prefixes:** build prefixes for known keys at deploy time (`sogv prefix build`), so even the first request for a key is instant.
 - **Heavier scenes:** footage, 3D, full-frame effects. These probably belong in a GPU or container tier that renders once into the same R2 cache, while the Worker keeps streaming.
 

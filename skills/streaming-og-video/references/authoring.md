@@ -60,7 +60,7 @@ export const hello = defineScenario({
 | `ctx.dots(source, { box, pitch, size, round, min, gamma, seed, order })` | A dot-matrix field: `source` (a sprite or layers) sampled on a `pitch` grid; each covered cell becomes a dot whose brightness is its coverage. `order(dot, random)` sets each dot's reveal threshold in [0, 1] |
 | `ctx.grid(spec)` | The tiled-grid reveal effect used by `title-card` |
 
-Fonts: `regular` and `semibold` (Inter) are built in. Add your own with `fonts: { display: () => bytes }` on the scenario.
+Fonts: `regular` and `semibold` (Inter) are built in. JetBrains Mono (Latin subset) is built in but opt-in: `fonts: { mono: 'jetbrains-mono', monoBold: 'jetbrains-mono-semibold' }` (see `terminal.js` and `code-kit.js`). It has no box-drawing, arrow or check glyphs, so draw those as shapes. Add your own with `fonts: { display: () => bytes }` on the scenario.
 
 Path command buffers are flat arrays:
 - `0 x y`: move
