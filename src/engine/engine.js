@@ -25,7 +25,10 @@ export const ENGINE_VERSION = '4'
  */
 export const DEFAULT_SCALE = 0.8
 
-/** Fonts every scenario gets unless it overrides the name. */
+/**
+ * Fonts every scenario gets unless it overrides the name. The built-in monospace faces
+ * (jetbrains-mono, jetbrains-mono-semibold) are opt-in: `fonts: { mono: 'jetbrains-mono' }`.
+ */
 export const DEFAULT_FONTS = { regular: 'inter-regular', semibold: 'inter-semibold' }
 
 /**
@@ -35,7 +38,8 @@ export const DEFAULT_FONTS = { regular: 'inter-regular', semibold: 'inter-semibo
  *   tailsAtFullRate?: number,
  *   images?: import('./images.js').ImageLoaderOptions,
  *   scale?: number,
- * }} options `fonts` resolves the built-in font names (inter-regular, inter-semibold).
+ * }} options `fonts` resolves the built-in font names (inter-regular, inter-semibold, jetbrains-mono,
+ *   jetbrains-mono-semibold).
  *   `images` configures fetching image params (fetch, allow, maxBytes, maxImages, cacheBytes).
  *   `scale` renders every scenario at about that fraction of its size, composited natively
  *   (default DEFAULT_SCALE, 0.8: 1200x630 -> 960x504; 1 renders at the declared size).

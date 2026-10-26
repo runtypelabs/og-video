@@ -7,6 +7,7 @@ which keep their own licenses.
 |---|---|---|
 | **x264** (H.264 encoder) | `wasm/x264.wasm`, built from `x264/` | **GPL-2.0-or-later**: see `x264/COPYING`. `x264/wrapper.c`, `x264/simd128.c`, `x264/simd128.patch` and `x264/check.c` are part of that build and are distributed under the same license. |
 | Inter (typeface) | `fonts/Inter-*.ttf.bin` | SIL Open Font License 1.1: see `fonts/OFL.txt` |
+| JetBrains Mono (typeface, Latin subset from Fontsource 5.3.0) | `fonts/JetBrainsMono-*.woff2.bin` | SIL Open Font License 1.1: see `fonts/OFL-JetBrainsMono.txt` |
 | Twemoji graphics | `src/scenarios/twemoji.json` (converted outlines) | CC-BY 4.0, Copyright Twitter, Inc and other contributors: https://github.com/jdecked/twemoji |
 | tiny-skia | compiled into `wasm/ogfx.wasm` | BSD-3-Clause |
 | fontkit, mp4-muxer | npm dependencies | MIT |

@@ -21,6 +21,8 @@ import ogfxModule from '../../wasm/ogfx.wasm'
 import x264Module from '../../wasm/x264.wasm'
 import interRegular from '../../fonts/Inter-Regular.ttf.bin'
 import interSemiBold from '../../fonts/Inter-SemiBold.ttf.bin'
+import jetbrainsMono from '../../fonts/JetBrainsMono-Regular.woff2.bin'
+import jetbrainsMonoSemiBold from '../../fonts/JetBrainsMono-SemiBold.woff2.bin'
 import { createEngine, ENGINE_VERSION, DEFAULT_SCALE, concat } from '../engine/engine.js'
 import { readPrefix } from '../engine/encode.js'
 import { validate, ParamError } from '../schema.js'
@@ -67,7 +69,13 @@ export function createHandler(options) {
   const getEngine = () =>
     (engine ??= createEngine({
       modules: { ogfx: ogfxModule, x264: x264Module },
-      fonts: { 'inter-regular': interRegular, 'inter-semibold': interSemiBold, ...o.fonts },
+      fonts: {
+        'inter-regular': interRegular,
+        'inter-semibold': interSemiBold,
+        'jetbrains-mono': jetbrainsMono,
+        'jetbrains-mono-semibold': jetbrainsMonoSemiBold,
+        ...o.fonts,
+      },
       tailsAtFullRate: o.tailsAtFullRate,
       images: o.images,
       scale: o.scale,
