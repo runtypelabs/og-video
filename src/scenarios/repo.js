@@ -114,7 +114,7 @@ function parseLangs(q, theme) {
   const sum = items.reduce((a, l) => a + l.v, 0)
   return items.map((l) => {
     const key = l.name.toLowerCase()
-    const color = l.color ?? (key === 'other' ? mix(theme.muted, theme.bg, 0.25) : LANG_COLORS[key] ?? SPARE[Math.floor(prng(key)() * SPARE.length)])
+    const color = l.color ?? (key === 'other' ? mix(theme.muted, theme.bg, 0.25) : (Object.hasOwn(LANG_COLORS, key) ? LANG_COLORS[key] : null) ?? SPARE[Math.floor(prng(key)() * SPARE.length)])
     return { name: l.name, share: l.v / sum, color }
   })
 }

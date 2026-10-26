@@ -246,7 +246,7 @@ function setup(ctx, q) {
     if (prev) y += m.role === 'r' && prev.role === 't' ? 6 : prev.role === m.role && m.role !== 'r' ? 10 : 16
     if (m.role === 'u' || m.role === 'a') {
       const right = m.role === 'u'
-      const lines = text.wrap('regular', m.text, MSG, BUBBLE_MAX - 2 * BPX, { maxLines })
+      const lines = text.wrap('regular', m.text, MSG, BUBBLE_MAX - 2 * BPX, { maxLines, breakWords: true })
       const tw = Math.ceil(Math.max(...lines.map((l) => l.width)))
       const bw = tw + 2 * BPX
       const x = right ? W - PAD_X - bw : PAD_X
@@ -361,7 +361,7 @@ function setup(ctx, q) {
       y += CHIP_H
     } else {
       // A result folds in under its call, joined by an elbow from the call's icon.
-      const lines = text.wrap('mono', m.text, RES_TEXT, CW - 52, { maxLines: 2 })
+      const lines = text.wrap('mono', m.text, RES_TEXT, CW - 52, { maxLines: 2, breakWords: true })
       const h = lines.length * RES_LH + 4
       const base = text.baselineIn('mono', RES_TEXT, RES_LH)
       const joined = prev?.role === 't'

@@ -125,15 +125,16 @@ export function createTextEngine(fontkit, fontBytes) {
 
   /**
    * Greedy word wrap into lines no wider than `maxWidth`, clamped to `maxLines` (the last shown
-   * line gets an ellipsis when text was cut, like -webkit-line-clamp). A word wider than a whole
-   * line breaks between characters, like CSS overflow-wrap: anywhere.
+   * line gets an ellipsis when text was cut, like -webkit-line-clamp). With `breakWords`, a word
+   * wider than a whole line breaks between characters (CSS overflow-wrap: anywhere); without it,
+   * every returned word is one word of `text`.
    * @returns {{ words: { text: string, run: any, x: number }[], width: number }[]}
    */
-  function wrap(fontKey, text, size, maxWidth, { letterSpacing = 0, maxLines = Infinity } = {}) {
+  function wrap(fontKey, text, size, maxWidth, { letterSpacing = 0, maxLines = Infinity, breakWords = false } = {}) {
     const opts = { letterSpacing }
     const space = run(fontKey, ' ', size, opts).advance
     const lines = [{ words: [], width: 0 }]
-    for (const word of text.split(/\s+/).filter(Boolean).flatMap((w) => breakWord(fontKey, w, size, maxWidth, opts))) {
+    for (const word of text.split(/\s+/).filter(Boolean).flatMap((w) => (breakWords ? breakWord(fontKey, w, size, maxWidth, opts) : [w]))) {
       const r = run(fontKey, word, size, opts)
       const line = lines[lines.length - 1]
       if (line.words.length && line.width + space + r.advance > maxWidth + 1e-6) {

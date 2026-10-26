@@ -47,7 +47,7 @@ export const hello = defineScenario({
 |---|---|
 | `ctx.width`, `ctx.height`, `ctx.fps`, `ctx.frames` | Video spec |
 | `ctx.text.run(font, str, size, { letterSpacing, features })` | Shape a run. Returns `{ advance, cmds(x, baseline, glyphIndex?), rightOf(i) }` |
-| `ctx.text.wrap(font, str, size, maxWidth, { letterSpacing, maxLines })` | Greedy word wrap with ellipsis clamping. Returns lines of `{ words: [{ text, run, x }], width }` |
+| `ctx.text.wrap(font, str, size, maxWidth, { letterSpacing, maxLines, breakWords })` | Greedy word wrap with ellipsis clamping; `breakWords` splits a word wider than the line. Returns lines of `{ words: [{ text, run, x }], width }` |
 | `ctx.text.fit(font, str, size, maxWidth)` | One line with an ellipsis |
 | `ctx.text.metrics(font, size)`, `ctx.text.baselineIn(font, size, lineHeight)` | Chrome-compatible vertical metrics |
 | `ctx.path(cmds)` | A path for `g.fill` (null if empty) |

@@ -142,6 +142,7 @@ test('extreme but valid params finish, and malformed lists are a ParamError', as
     [race, { labels: ['A', 'B'], periods: ['1', '2'], values: [[5e-324, 5e-324], [5e-324, 5e-324]] }],
     [race, { labels: ['A', 'B'], periods: ['1', '2'], values: [[0, 0], [0, 0]] }],
     [repo, { series: '0,1000000000000000000000000000000', langs: 'Rust:1e308,Go:1e308' }],
+    [repo, { lang: 'constructor' }],
     [transcript, { chat: `u: ${'y'.repeat(270)} | constructor: explain | a: ${'x'.repeat(200)}` }],
   ])
     await engine.poster(scenario, await parseParams(scenario, raw))

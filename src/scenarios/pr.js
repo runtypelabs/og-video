@@ -149,7 +149,7 @@ function setup(ctx, q) {
   const repoW = numRun ? numX + numRun.advance - repoX : repoRun ? repoRun.advance : 0
 
   // ---------------------------------------------------------------- title
-  const titleLines = text.wrap('semibold', q.title, TITLE_SIZE, W - 2 * PAD_X, { letterSpacing: -0.02 * TITLE_SIZE, maxLines: 2 })
+  const titleLines = text.wrap('semibold', q.title, TITLE_SIZE, W - 2 * PAD_X, { letterSpacing: -0.02 * TITLE_SIZE, maxLines: 2, breakWords: true })
   const titleTop = 140
   const titles = titleLines.map((line, i) => {
     const base = titleTop + i * TITLE_LH
