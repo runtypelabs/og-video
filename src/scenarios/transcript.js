@@ -379,7 +379,7 @@ function setup(ctx, q) {
       const entry = { role: 'r', y, h, o }
       entry.it = item([o], (g, off) => {
         if (o.r <= 0) return
-        const c = view(ey + off - 2, y + off + 4 + o.r * h)
+        const c = view(ey + off - 2, entry.y + off + 4 + o.r * h)
         g.draw(sp, { opacity: clamp01(o.r * 1.4), transform: [1, 0, 0, 1, 0, off], clip: c })
       })
       convo.push(entry)
