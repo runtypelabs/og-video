@@ -47,7 +47,7 @@ export const hello = defineScenario({
 |---|---|
 | `ctx.width`, `ctx.height`, `ctx.fps`, `ctx.frames` | Video spec |
 | `ctx.text.run(font, str, size, { letterSpacing, features })` | Shape a run. Returns `{ advance, cmds(x, baseline, glyphIndex?), rightOf(i) }` |
-| `ctx.text.wrap(font, str, size, maxWidth, { letterSpacing, maxLines })` | Greedy word wrap with ellipsis clamping. Returns lines of `{ words: [{ text, run, x }], width }` |
+| `ctx.text.wrap(font, str, size, maxWidth, { letterSpacing, maxLines, breakWords })` | Greedy word wrap with ellipsis clamping; `breakWords` splits a word wider than the line. Returns lines of `{ words: [{ text, run, x }], width }` |
 | `ctx.text.fit(font, str, size, maxWidth)` | One line with an ellipsis |
 | `ctx.text.metrics(font, size)`, `ctx.text.baselineIn(font, size, lineHeight)` | Chrome-compatible vertical metrics |
 | `ctx.path(cmds)` | A path for `g.fill` (null if empty) |
@@ -60,7 +60,7 @@ export const hello = defineScenario({
 | `ctx.dots(source, { box, pitch, size, round, min, gamma, seed, order })` | A dot-matrix field: `source` (a sprite or layers) sampled on a `pitch` grid; each covered cell becomes a dot whose brightness is its coverage. `order(dot, random)` sets each dot's reveal threshold in [0, 1] |
 | `ctx.grid(spec)` | The tiled-grid reveal effect used by `title-card` |
 
-Fonts: `regular` and `semibold` (Inter) are built in. Add your own with `fonts: { display: () => bytes }` on the scenario.
+Fonts: `regular` and `semibold` (Inter) are built in. JetBrains Mono (Latin subset) is built in but opt-in: `fonts: { mono: 'jetbrains-mono', monoBold: 'jetbrains-mono-semibold' }` (see `terminal.js` and `code-kit.js`). It has no box-drawing, arrow or check glyphs, so draw those as shapes. Add your own with `fonts: { display: () => bytes }` on the scenario.
 
 Path command buffers are flat arrays:
 - `0 x y`: move

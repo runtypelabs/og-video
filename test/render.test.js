@@ -134,3 +134,21 @@ test('scale: 1 renders at the layout size; other scales round to sizes the encod
   const view = new DataView(png.buffer, png.byteOffset)
   assert.deepEqual([view.getUint32(16), view.getUint32(20)], [848, 446])
 })
+
+test('extreme but valid params finish, and malformed lists are a ParamError', async () => {
+  const { race, repo, transcript, terminal } = builtins
+  const { ParamError } = await import('../src/schema.js')
+  for (const [scenario, raw] of [
+    [race, { labels: ['A', 'B'], periods: ['1', '2'], values: [[5e-324, 5e-324], [5e-324, 5e-324]] }],
+    [race, { labels: ['A', 'B'], periods: ['1', '2'], values: [[0, 0], [0, 0]] }],
+    [repo, { series: '0,1000000000000000000000000000000', langs: 'Rust:1e308,Go:1e308' }],
+    [repo, { lang: 'constructor' }],
+    [transcript, { chat: `u: ${'y'.repeat(270)} | constructor: explain | a: ${'x'.repeat(200)}` }],
+  ])
+    await engine.poster(scenario, await parseParams(scenario, raw))
+  await assert.rejects(parseParams(repo, { topics: [{ toString: null }] }), ParamError)
+  // Free-text fields joined naively would collide; the prefix keys must not.
+  const a = await parseParams(terminal, { title: 'a|b', prompt: 'c' })
+  const b = await parseParams(terminal, { title: 'a', prompt: 'b|c' })
+  assert.notEqual(terminal.prefix.key(a), terminal.prefix.key(b))
+})

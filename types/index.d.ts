@@ -86,7 +86,7 @@ export interface TextEngine {
   metrics(font: string, size: number): { ascent: number; descent: number; normal: number }
   baselineIn(font: string, size: number, lineHeight: number): number
   fit(font: string, text: string, size: number, maxWidth: number, opts?: { letterSpacing?: number }): TextRun
-  wrap(font: string, text: string, size: number, maxWidth: number, opts?: { letterSpacing?: number; maxLines?: number }): {
+  wrap(font: string, text: string, size: number, maxWidth: number, opts?: { letterSpacing?: number; maxLines?: number; breakWords?: boolean }): {
     words: { text: string; run: TextRun; x: number }[]
     width: number
   }[]

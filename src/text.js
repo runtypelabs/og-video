@@ -125,14 +125,16 @@ export function createTextEngine(fontkit, fontBytes) {
 
   /**
    * Greedy word wrap into lines no wider than `maxWidth`, clamped to `maxLines` (the last shown
-   * line gets an ellipsis when text was cut, like -webkit-line-clamp).
+   * line gets an ellipsis when text was cut, like -webkit-line-clamp). With `breakWords`, a word
+   * wider than a whole line breaks between characters (CSS overflow-wrap: anywhere); without it,
+   * every returned word is one word of `text`.
    * @returns {{ words: { text: string, run: any, x: number }[], width: number }[]}
    */
-  function wrap(fontKey, text, size, maxWidth, { letterSpacing = 0, maxLines = Infinity } = {}) {
+  function wrap(fontKey, text, size, maxWidth, { letterSpacing = 0, maxLines = Infinity, breakWords = false } = {}) {
     const opts = { letterSpacing }
     const space = run(fontKey, ' ', size, opts).advance
     const lines = [{ words: [], width: 0 }]
-    for (const word of text.split(/\s+/).filter(Boolean)) {
+    for (const word of text.split(/\s+/).filter(Boolean).flatMap((w) => (breakWords ? breakWord(fontKey, w, size, maxWidth, opts) : [w]))) {
       const r = run(fontKey, word, size, opts)
       const line = lines[lines.length - 1]
       if (line.words.length && line.width + space + r.advance > maxWidth + 1e-6) {
@@ -153,6 +155,26 @@ export function createTextEngine(fontkit, fontBytes) {
       return shown
     }
     return lines
+  }
+
+  /** `word` as is when it fits `maxWidth`, else split into the longest pieces that do (at least one character each). */
+  function breakWord(fontKey, word, size, maxWidth, opts) {
+    if (run(fontKey, word, size, opts).advance <= maxWidth + 1e-6) return [word]
+    const chars = [...word]
+    const pieces = []
+    let start = 0
+    while (start < chars.length) {
+      let lo = start + 1
+      let hi = chars.length
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1
+        if (run(fontKey, chars.slice(start, mid).join(''), size, opts).advance <= maxWidth + 1e-6) lo = mid
+        else hi = mid - 1
+      }
+      pieces.push(chars.slice(start, lo).join(''))
+      start = lo
+    }
+    return pieces
   }
 
   return { run, metrics, baselineIn, fit, wrap, has: (key) => key in fonts }

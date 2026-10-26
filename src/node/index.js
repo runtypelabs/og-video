@@ -15,6 +15,8 @@ export async function createNodeEngine(options = {}) {
     fonts: {
       'inter-regular': () => file('fonts/Inter-Regular.ttf.bin'),
       'inter-semibold': () => file('fonts/Inter-SemiBold.ttf.bin'),
+      'jetbrains-mono': () => file('fonts/JetBrainsMono-Regular.woff2.bin'),
+      'jetbrains-mono-semibold': () => file('fonts/JetBrainsMono-SemiBold.woff2.bin'),
     },
     ...options,
   })
