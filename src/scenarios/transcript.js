@@ -68,7 +68,7 @@ export const transcript = defineScenario({
     accent: p.color({ default: '#3b82f6' }),
     theme: p.enum(['dark', 'light'], { default: 'dark' }),
   }),
-  prefix: { frames: 30, key: (q) => `${q.accent}|${q.theme}|${q.title}|${q.model}` },
+  prefix: { frames: 30, key: (q) => JSON.stringify([q.accent, q.theme, q.title, q.model]) },
   meta: (q) => {
     const msgs = parseChat(q)
     const first = msgs.find((m) => m.role === 'u')
@@ -89,7 +89,7 @@ export function parseChat(q) {
   const out = []
   for (const s of raw) {
     const m = s.match(/^\s*([a-z]+!?)\s*:\s*([\s\S]*)$/i)
-    const role = m && ROLES[m[1].toLowerCase()]
+    const role = m && Object.hasOwn(ROLES, m[1].toLowerCase()) ? ROLES[m[1].toLowerCase()] : undefined
     // No (known) prefix: alternate user and assistant.
     const r = role ?? (out.filter((x) => x.role === 'u' || x.role === 'a').at(-1)?.role === 'u' ? 'a' : 'u')
     const text = (role ? m[2] : s).trim().slice(0, 280)

@@ -29,11 +29,14 @@ const BAR = { y: 538, h: 12 }
 const LEGEND_BASE = 588
 const CHART = { y0: 376, y1: 490 }
 
-/** A comma-separated list as a string param (URL-friendly); a JSON array is joined first. */
+/**
+ * A comma-separated list as a string param (URL-friendly); a JSON array of strings or numbers is
+ * joined first. Any other array goes through as-is, so the string schema rejects it cleanly.
+ */
 function list(opts) {
   const schema = p.string(opts)
   const parse = schema.parse
-  schema.parse = (v, path) => parse(Array.isArray(v) ? v.join(',') : v, path)
+  schema.parse = (v, path) => parse(Array.isArray(v) && v.every((x) => typeof x === 'string' || typeof x === 'number') ? v.join(',') : v, path)
   return schema
 }
 
@@ -62,7 +65,7 @@ export const repo = defineScenario({
     accent: p.color({ default: '#f59e0b' }),
     theme: p.enum(['dark', 'light'], { default: 'dark' }),
   }),
-  prefix: { frames: 40, key: (q) => `${q.accent}|${q.theme}|${q.owner}|${q.name}` },
+  prefix: { frames: 40, key: (q) => JSON.stringify([q.accent, q.theme, q.owner, q.name]) },
   meta: (q) => ({
     title: q.owner ? `${q.owner}/${q.name}` : q.name,
     description: [q.desc, `${compact(q.stars)} stars`, q.version && `v${q.version.replace(/^v/i, '')}`].filter(Boolean).join(' · '),
@@ -105,7 +108,7 @@ function parseLangs(q, theme) {
       const [name, v, c] = part.split(':').map((x) => x.trim())
       if (!name) continue
       const n = Number(v)
-      raw.push({ name: name.slice(0, 24), v: v && Number.isFinite(n) && n > 0 ? n : v ? 0 : 1, color: /^#?[0-9a-f]{6}$/i.test(c ?? '') ? hex(c) : null })
+      raw.push({ name: name.slice(0, 24), v: v && Number.isFinite(n) && n > 0 ? Math.min(n, 1e9) : v ? 0 : 1, color: /^#?[0-9a-f]{6}$/i.test(c ?? '') ? hex(c) : null })
     }
   const items = raw.filter((l) => l.v > 0)
   const sum = items.reduce((a, l) => a + l.v, 0)
@@ -365,6 +368,7 @@ function setup(ctx, q) {
     .filter(Boolean)
     .map(Number)
     .filter(Number.isFinite)
+    .map((v) => Math.min(Math.max(v, 0), 1e12)) // keeps the milestone maths exact
     .slice(-64)
   const hasChart = series.length >= 2
   const lsz = 18
@@ -675,7 +679,7 @@ function chart(ctx, q, { theme, accent, x0, x1, y0, y1, labelBase, series, s, tl
   let step = 1
   for (let e = 0; e < 10; e++) for (const f of e ? [1, 2, 2.5, 5] : [1, 2, 5]) if (Math.floor(hi / (f * 10 ** e)) >= 2) step = f * 10 ** e
   const marks = []
-  for (let m = Math.floor(hi / step) * step; m > lo + (hi - lo) * 0.1 && marks.length < 3; m -= step) {
+  for (let m = Math.floor(hi / step) * step, n = 0; m > lo + (hi - lo) * 0.1 && marks.length < 3 && n < 64; m -= step, n++) {
     const target = yOf(m)
     let cx = -1
     for (let x = 0; x < colY.length; x++)

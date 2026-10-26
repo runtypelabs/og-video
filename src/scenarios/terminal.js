@@ -84,7 +84,7 @@ export const terminal = defineScenario({
     accent: p.color({ default: '#22d3ee' }),
     theme: p.enum(['dark', 'light'], { default: 'dark' }),
   }),
-  prefix: { frames: 36, key: (q) => `${q.theme}|${q.accent}|${q.title}|${q.prompt}|${frame(script(q).length + 1).rows}` },
+  prefix: { frames: 36, key: (q) => JSON.stringify([q.theme, q.accent, q.title, q.prompt, frame(script(q).length + 1).rows]) },
   meta: (q) => {
     const rows = script(q)
     const cmds = rows.filter((r) => r.kind === 'cmd').map((r) => r.text)

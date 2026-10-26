@@ -219,6 +219,9 @@ function setup(ctx, q) {
   // Room for the widest value label, plus a digit for values in between.
   const valueW = Math.ceil(Math.max(...data.flat().map((v) => labelParts(format(v), size, theme.muted).w)) + glyphsFor(size, theme.muted)('0').adv)
   const L = W - PAD_X - valueW - 12 - X0 // bar length at the scale's maximum
+  // Every glyph set draw() uses, built here so no frame rasterizes: tick labels and the leader's values.
+  glyphsFor(15, theme.muted)
+  glyphsFor(size, theme.fg)
 
   const items = q.labels.map((label, i) => {
     const name = text.fit('semibold', label, size, LABEL_W)
@@ -299,7 +302,7 @@ function setup(ctx, q) {
       if (k < shown) target = Math.max(target, t < RACE_AT ? data[e][0] : v[e])
     })
     // The scale jumps up with a growing leader and eases down, so no bar ever overflows.
-    target = target || 1
+    target = target > 1e-6 ? target : 1 // all zero (or denormal) data: keep the tick maths finite
     sc = f === 0 || target > sc ? target : sc + (target - sc) * 0.12
     scale[f] = sc
   }
@@ -319,7 +322,7 @@ function setup(ctx, q) {
     // Every multiple of the finer step (fading out as the scale grows) and of the coarser one
     // (fading in); lines on both stay solid.
     const grain = up % lo === 0 ? lo : lo / 2
-    for (let m = 1; m * grain <= max * 1.0001; m++) {
+    for (let m = 1; m * grain <= max * 1.0001 && m <= 64; m++) {
       const value = m * grain
       const a = on(value, lo) && on(value, up) ? 1 : on(value, lo) ? 1 - k : on(value, up) ? k : 0
       if (a < 0.02) continue

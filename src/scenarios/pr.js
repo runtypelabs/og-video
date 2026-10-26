@@ -67,7 +67,7 @@ export const pr = defineScenario({
     accent: p.color({ default: '#8b5cf6' }),
     theme: p.enum(['dark', 'light'], { default: 'dark' }),
   }),
-  prefix: { frames: 24, key: (q) => `${q.theme}|${q.accent}|${q.repo}|${q.number}` },
+  prefix: { frames: 24, key: (q) => JSON.stringify([q.theme, q.accent, q.repo, q.number]) },
   meta: (q) => ({
     title: `${q.title}${q.number ? ` #${q.number}` : ''}`,
     description: [q.repo, `${q.state === 'open' ? 'Opened' : LABELS[q.state]}${q.author ? ` by ${q.author}` : ''}`, `+${q.additions} -${q.deletions}`, q.files ? `${q.files} file${q.files === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · '),
