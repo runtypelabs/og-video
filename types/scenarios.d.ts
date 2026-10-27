@@ -66,6 +66,12 @@ export const grid: Scenario<{
   warn?: string
   theme: 'dark' | 'light'
 }>
+export const dither: Scenario<{
+  title: string
+  kicker: string
+  brand: string
+  accent: string
+}>
 export const race: Scenario<{
   title: string
   labels: string[]

@@ -155,9 +155,10 @@ The [skill](skills/streaming-og-video/SKILL.md) covers the mental model, the ful
 | `repo` | A repo or package card: the star count rolls up, the language bar fills, topic pills pop in, and an optional star history draws with milestone ticks | `sogv render repo` |
 | `transcript` | An agent run replays: user bubbles, tool calls whose spinners resolve to a check (or a red cross for `r!:` failures), typing dots, then the answer. `chat=u: … \| t: tool(args) \| r: result \| a: answer` | `sogv render transcript` |
 | `grid` | A results grid (evals, test matrices): tiles flip in a wave to pass, warn or fail with a glyph each, row tallies land, and a pass count rolls up | `sogv render grid` |
+| `dither` | A dithered aurora in the accent colour rises in Bayer order and keeps flowing at 60 fps, re-dithered every frame against a fixed matrix; the title dithers in, then resolves to solid type. After dithercn's Aurora | `sogv render dither` |
 | `race` | A bar chart race: horizontal bars swap ranks across periods as values count, the axis rescales to the leader, and a big period counter rolls over | `sogv render race` |
 
-All of them take `accent`, and `kinetic`, `metric`, `bars`, `release` and the six from `terminal` down also take `theme=light`. The last three are new in v2 and not yet on og.video. `GET /<scenario>.json` lists the resolved params with their defaults.
+All of them take `accent`, and `kinetic`, `metric`, `bars`, `release` and the six from `terminal` down also take `theme=light`. The last three are new in v2 and not yet on og.video, and neither is `dither`. `GET /<scenario>.json` lists the resolved params with their defaults.
 
 ## Layout
 

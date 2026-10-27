@@ -13,6 +13,11 @@ export interface Sprite { readonly id: number; readonly x: number; readonly y: n
 export interface GridEffect { readonly spec: GridSpec }
 /** A dot-matrix field from ctx.dots(). */
 export interface DotField { readonly id: number; readonly count: number }
+/**
+ * A grid of palette-indexed cells, from ctx.cells(). Fill `index` (cols x rows, row-major; 0 is
+ * transparent, i picks palette[i]) before each g.cells(). `step` is the pitch in frame px.
+ */
+export interface CellGrid { readonly cols: number; readonly rows: number; readonly step: number; readonly index: Uint8Array }
 
 /** A gradient stop: [offset 0..1, color, alpha?]. */
 export type Stop = [number, Color] | [number, Color, number]
@@ -119,6 +124,11 @@ export interface SetupContext {
   image(src: string | undefined, box: { x?: number; y?: number; w: number; h: number; fit?: 'cover' | 'contain' | 'fill'; position?: [number, number]; radius?: number }): Sprite | null
   /** A dot-matrix (halftone) of a sprite or layers, for g.dots(). */
   dots(source: Sprite | SpriteLayer[] | null, opts?: DotOptions): DotField | null
+  /**
+   * A cell grid for effects recomputed every frame (an ordered dither, say). Cells snap to whole
+   * output pixels: `pitch` and `size` (frame px) round at the render scale.
+   */
+  cells(opts: { x?: number; y?: number; w?: number; h?: number; pitch?: number; size?: number; palette: Color[] }): CellGrid
 }
 
 /** What draw() gets, once per changed frame. */
@@ -146,6 +156,8 @@ export interface Frame {
    * dissolving out in the same sweep direction). `color` overrides the dots' source colours.
    */
   dots(field: DotField | null, opts?: { progress?: number; softness?: number; opacity?: number; grow?: boolean; color?: Color; reverse?: boolean }): void
+  /** Draws a cell grid as its `index` stands now: each nonzero cell a solid square. */
+  cells(grid: CellGrid | null): void
 }
 
 export interface Scene<S = unknown> {

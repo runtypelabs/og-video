@@ -411,6 +411,23 @@ export function createRun(compositor, text, video, setup, assets = {}, scale = 1
   }
 
   /**
+   * A grid of palette-indexed cells for effects recomputed every frame (an ordered dither, say),
+   * which a dot field cannot do: its colours are fixed in setup. Cells are whole output pixels,
+   * so the grid stays crisp at any scale. Fill `grid.index` (cols x rows, row-major; 0 is
+   * transparent, i picks palette[i]) and draw it with g.cells(grid).
+   */
+  const cells = ({ x: bx = 0, y: by = 0, w = video.width, h = video.height, pitch = 4, size = pitch, palette }) => {
+    const step = Math.max(1, Math.round(pitch * k)), dot = Math.max(1, Math.min(step, Math.round(size * k)))
+    const x0 = Math.round(bx * k), y0 = Math.round(by * k)
+    const cols = Math.floor((w * k) / step), rows = Math.floor((h * k) / step)
+    const pal = Uint32Array.from(palette, rgb)
+    // Kept for the run: written into before every draw, never freed.
+    const buf = x.alloc(cols * rows), palPtr = x.alloc(pal.byteLength)
+    new Uint32Array(x.memory.buffer, palPtr, pal.length).set(pal)
+    return { cols, rows, step: step / k, index: new Uint8Array(cols * rows), draw: [buf, cols, rows, x0, y0, step, dot, palPtr, pal.length] }
+  }
+
+  /**
    * The tiled-grid reveal effect: a shape (usually many rounded cells) rasterized once into a
    * coverage mask, revealed by a radial gradient from `center`, and resampled from a mip pyramid
    * when the stage is scaled. Kept across renders while `key` is unchanged.
@@ -525,6 +542,12 @@ export function createRun(compositor, text, video, setup, assets = {}, scale = 1
       const soft = Math.max(0, softness)
       x.dots_draw(field.id, progress * (1 + soft), soft, opacity, grow ? 1 : 0, color === undefined ? -1 : rgb(color), reverse ? 1 : 0)
     },
+    cells(grid) {
+      if (!grid) return
+      beforeDraw()
+      new Uint8Array(x.memory.buffer, grid.draw[0], grid.index.length).set(grid.index)
+      x.cells_draw(...grid.draw)
+    },
     grid(effect, { radius, opacity = 1, scale = 1, x: tx = 0, y: ty = 0 }) {
       if (!inLayer) throw new Error('g.grid() repaints the whole frame, so it belongs in a layer')
       if (!(opacity > 0 && radius > 0)) {
@@ -545,7 +568,7 @@ export function createRun(compositor, text, video, setup, assets = {}, scale = 1
     },
   }
 
-  const ctx = { width: video.width, height: video.height, fps, frames: video.frames, text, path, sprite, bitmap, grid, clip, shadow, image, dots, mask: (cmds, o) => sprite([{ cmds, color: 0xffffff, evenodd: o?.evenodd }], o) }
+  const ctx = { width: video.width, height: video.height, fps, frames: video.frames, text, path, sprite, bitmap, grid, clip, shadow, image, dots, cells, mask: (cmds, o) => sprite([{ cmds, color: 0xffffff, evenodd: o?.evenodd }], o) }
   const scene = setup(ctx)
   const frames = video.frames
   let lastKey = null

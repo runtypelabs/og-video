@@ -9,6 +9,7 @@ which keep their own licenses.
 | Inter (typeface) | `fonts/Inter-*.ttf.bin` | SIL Open Font License 1.1: see `fonts/OFL.txt` |
 | JetBrains Mono (typeface, Latin subset from Fontsource 5.3.0) | `fonts/JetBrainsMono-*.woff2.bin` | SIL Open Font License 1.1: see `fonts/OFL-JetBrainsMono.txt` |
 | Twemoji graphics | `src/scenarios/twemoji.json` (converted outlines) | CC-BY 4.0, Copyright Twitter, Inc and other contributors: https://github.com/jdecked/twemoji |
+| dithercn's Aurora field and noise helpers, ported from GLSL | `src/scenarios/dither.js` | MIT, Copyright (c) 2026 Leo (opencoredev): https://github.com/opencoredev/dithercn |
 | tiny-skia | compiled into `wasm/ogfx.wasm` | BSD-3-Clause |
 | fontkit, mp4-muxer | npm dependencies | MIT |
 | GSAP | npm dependency, used by the built-in scenarios | GSAP Standard License: https://gsap.com/standard-license |

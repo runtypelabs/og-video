@@ -48,6 +48,7 @@ Use this skill to:
    - `falling-words.js` (physics precomputed in setup, rotated sprites, sleepers baked per epoch);
    - `gallery.js` (image params, whole-pixel scrolling that loops);
    - `terminal.js` and `pr.js` (monospace text, typing reveals; shared pieces in `code-kit.js`);
+   - `dither.js` (an ordered dither recomputed every frame with cell grids);
    - `race.js` (rank changes over time). See `references/authoring.md` for the full API.
 2. Define `params` with `p.object({...})`. Bound every field, since params come from strangers' URLs. Give every field a default so the bare URL looks good.
 3. Iterate with stills: `npx sogv stills path/to/scenario.js#name --params '{"title":"..."}' --at 0.5,2,4,last -o out/x`. Then look at the PNGs.
