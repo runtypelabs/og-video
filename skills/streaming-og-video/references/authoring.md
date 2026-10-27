@@ -58,6 +58,7 @@ export const hello = defineScenario({
 | `ctx.shadow(sprite, { blur, color, opacity, spread })` | A new sprite: the drop shadow or glow of `sprite`, computed once. Draw it under the sprite with an offset transform (glows: `blend: 'add'` or `'screen'`) |
 | `ctx.image(url, { x, y, w, h, fit, position, radius })` | An image param as a sprite fitted into the box: `cover` (default), `contain`, `fill`. Null if it could not be fetched or decoded; draw a placeholder then |
 | `ctx.dots(source, { box, pitch, size, round, min, gamma, seed, order })` | A dot-matrix field: `source` (a sprite or layers) sampled on a `pitch` grid; each covered cell becomes a dot whose brightness is its coverage. `order(dot, random)` sets each dot's reveal threshold in [0, 1] |
+| `ctx.cells({ x, y, w, h, pitch, size, palette })` | A grid of palette-indexed cells for effects recomputed every frame, such as an ordered dither. Fill `grid.index` (cols x rows; 0 is transparent, i picks `palette[i]`) before each `g.cells(grid)`. Cells snap to whole output pixels |
 | `ctx.grid(spec)` | The tiled-grid reveal effect used by `title-card` |
 
 Fonts: `regular` and `semibold` (Inter) are built in. JetBrains Mono (Latin subset) is built in but opt-in: `fonts: { mono: 'jetbrains-mono', monoBold: 'jetbrains-mono-semibold' }` (see `terminal.js` and `code-kit.js`). It has no box-drawing, arrow or check glyphs, so draw those as shapes. Add your own with `fonts: { display: () => bytes }` on the scenario.
@@ -106,6 +107,7 @@ Bodies at rest fall asleep: they are exactly still and act as static until somet
 | `g.fill(path, paint, { alpha, transform, clip, mask, blend, evenodd })` | Live vector fill with a 2D affine `[a, b, c, d, e, f]`. `paint` is a colour or a gradient |
 | `g.draw(sprite, { opacity, blur, clip, transform, blend, mask })` | Blend a sprite. `blur` is a Gaussian sigma in px, applied before the transform. `clip` is `[x0, y0, x1, y1]`. `transform` maps the sprite's frame coordinates (bilinear; whole-pixel translations copy pixels and cost nothing extra) |
 | `g.dots(field, { progress, softness, opacity, grow, color, reverse })` | Draw a dot field revealed to `progress` (0..1). Dots appear as progress passes their threshold, fading (or growing, with `grow`) in over `softness`. For a dissolve-out in the same direction, run progress from 1 to 0 with `reverse: true` |
+| `g.cells(grid)` | Draw a cell grid as its `index` stands: each nonzero cell a solid square. Every frame that calls it differs, so keep it for effects that really move |
 | `g.grid(effect, { radius, opacity, scale, x, y })` | Inside a layer only |
 
 - **Blend modes:** `normal`, `add`, `screen`, `multiply`, `overlay`.
@@ -133,6 +135,7 @@ Costs for one 1200x630 frame (local wasm SIMD). Frames render at 960x504 by defa
 - **Scrolling**: move by whole pixels per frame where you can (`gallery.js`). Whole-pixel motion copies pixels and lets x264 match blocks exactly, which is much cheaper to encode than sub-pixel motion.
 - **Shadows and glows**: make them once with `ctx.shadow` and draw them like any sprite.
 - **Dissolves**: `ctx.dots` + `g.dots` (`dot-matrix.js`). A label in the pixel font can be a dot field too.
+- **Moving dithers**: `ctx.cells` + `g.cells` (`dither.js`). Evaluate the field at a few keyframes in setup, then each frame blend them and quantize against a Bayer matrix fixed to the screen.
 - **Keep state small.** `state(i)` is stringified every frame, so return only what `draw` reads. GSAP's `_gsap` caches are skipped automatically because keys starting with `_` are ignored.
 - **Under budget?** `sogv bench` should stay well under realtime (7 s at 60 fps in under ~500 ms locally). When most of the frame moves every frame, the encoder dominates: lower `video.fps` (24 or 30) and use a `video.qp` of 23–26 for busy fine detail.
 

@@ -1232,6 +1232,40 @@ pub extern "C" fn dots_draw(id: i32, progress: f32, softness: f32, opacity: f32,
     if !b.empty() { mark_rect(s, b.x0 as f32, b.y0 as f32, b.x1 as f32, b.y1 as f32); }
 }
 
+// ------------------------------------------------------------------ cells
+
+/// Draws a grid of palette-indexed cells, recomputed every frame (an ordered dither, say):
+/// `cols` x `rows` u8 indices at `ptr`, each a solid `size` px square every `pitch` px from
+/// (`x0`, `y0`). Index 0 is transparent; others pick 0xrrggbb from the `n` colours at `pal`.
+#[no_mangle]
+pub unsafe extern "C" fn cells_draw(ptr: *const u8, cols: i32, rows: i32, x0: i32, y0: i32, pitch: i32, size: i32, pal: *const u32, n: usize) {
+    let idx = std::slice::from_raw_parts(ptr, (cols * rows) as usize);
+    let pal = std::slice::from_raw_parts(pal, n);
+    let s = st();
+    let (W, H) = (s.w as i32, s.h as i32);
+    let out = rows_u32(s.frame.data_mut());
+    let mut b = Rect { x0: i32::MAX, y0: i32::MAX, x1: i32::MIN, y1: i32::MIN };
+    for r in 0..rows {
+        let y = y0 + r * pitch;
+        let (ya, yb) = (y.max(0), (y + size).min(H));
+        if ya >= yb { continue; }
+        for c in 0..cols {
+            let i = idx[(r * cols + c) as usize] as usize;
+            if i == 0 || i >= n { continue; }
+            let x = x0 + c * pitch;
+            let (xa, xb) = (x.max(0), (x + size).min(W));
+            if xa >= xb { continue; }
+            let c = pal[i];
+            let px = 0xff00_0000 | ((c >> 16) & 255) | (((c >> 8) & 255) << 8) | ((c & 255) << 16);
+            for fy in ya..yb {
+                out[(fy * W + xa) as usize..(fy * W + xb) as usize].fill(px);
+            }
+            b = Rect { x0: b.x0.min(xa), y0: b.y0.min(ya), x1: b.x1.max(xb), y1: b.y1.max(yb) };
+        }
+    }
+    if !b.empty() { mark_rect(s, b.x0 as f32, b.y0 as f32, b.x1 as f32, b.y1 as f32); }
+}
+
 // ------------------------------------------------------------------ images
 
 /// Largest decoded image, in pixels. JPEGs are decoded at a reduced DCT scale first when they
